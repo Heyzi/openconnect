@@ -431,6 +431,10 @@ int connect_https_socket(struct openconnect_info *vpninfo)
 			char host[80];
 
 			host[0] = 0;
+
+			if (vpninfo->ipv4only && rp->ai_family != AF_INET) continue;
+			if (vpninfo->ipv6only && rp->ai_family != AF_INET6) continue;
+
 			if (!getnameinfo(rp->ai_addr, rp->ai_addrlen, host,
 					 sizeof(host), NULL, 0, NI_NUMERICHOST))
 				vpn_progress(vpninfo, PRG_DEBUG, vpninfo->proxy_type ?

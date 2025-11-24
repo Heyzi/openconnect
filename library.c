@@ -105,6 +105,8 @@ struct openconnect_info *openconnect_vpninfo_new(const char *useragent,
 	vpninfo->unique_hostname = NULL;
 	vpninfo->port = 443;
 	vpninfo->urlpath = NULL;
+	vpninfo->ipv4only = 0;
+	vpninfo->ipv6only = 0;
 	vpninfo->sni = NULL;
 	vpninfo->connect_urlbuf = NULL;
 	vpninfo->cert_expire_warning = 60 * 86400;
