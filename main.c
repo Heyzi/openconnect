@@ -44,9 +44,13 @@
 #define MAX_READ_STDIN_SIZE 4096
 
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #include <shlwapi.h>
 #include <wtypes.h>
 #include <wincon.h>
+#include "win32-background.h"
 #else
 #include <pwd.h>
 #include <termios.h>
@@ -83,11 +87,11 @@ static void init_token(struct openconnect_info *vpninfo,
 #undef openconnect_version_str
 
 static int timestamp;
-#ifndef _WIN32
 static int background;
-static int use_syslog; /* static variable initialised to 0 */
 static int wrote_pid; /* static variable initialised to 0 */
 static char *pidfile; /* static variable initialised to NULL */
+#ifndef _WIN32
+static int use_syslog; /* static variable initialised to 0 */
 #endif
 static int do_passphrase_from_fsid;
 static int non_inter;
@@ -195,6 +199,9 @@ enum {
 	OPT_NO_PROXY,
 	OPT_NO_XMLPOST,
 	OPT_PIDFILE,
+#ifdef _WIN32
+	OPT_BACKGROUND_CHILD,
+#endif
 	OPT_PASSWORD_ON_STDIN,
 	OPT_PRINTCOOKIE,
 	OPT_RECONNECT_TIMEOUT,
@@ -233,14 +240,17 @@ enum {
 #endif
 
 static const struct option long_options[] = {
-#ifndef _WIN32
 	OPTION("background", 0, 'b'),
 	OPTION("pid-file", 1, OPT_PIDFILE),
+#ifndef _WIN32
 	OPTION("setuid", 1, 'U'),
 	OPTION("script-tun", 0, 'S'),
 	OPTION("syslog", 0, 'l'),
 	OPTION("csd-user", 1, OPT_CSD_USER),
 	OPTION("csd-wrapper", 1, OPT_CSD_WRAPPER),
+#endif
+#ifdef _WIN32
+	OPTION("background-child", 1, OPT_BACKGROUND_CHILD),
 #endif
 #if defined(HAVE_POSIX_SPAWN) || defined(_WIN32)
 	OPTION("external-browser", 1, OPT_EXT_BROWSER),
@@ -1073,10 +1083,10 @@ static void usage(void)
 	printf("      --cookieonly                %s\n", _("Fetch and print cookie only; don't connect"));
 	printf("      --printcookie               %s\n", _("Print cookie before connecting"));
 
-#ifndef _WIN32
 	printf("\n%s:\n", _("Process control"));
 	printf("  -b, --background                %s\n", _("Continue in background after startup"));
 	printf("      --pid-file=PIDFILE          %s\n", _("Write the daemon's PID to this file"));
+#ifndef _WIN32
 	printf("  -U, --setuid=USER               %s\n", _("Drop privileges after connecting"));
 #endif
 
@@ -1212,7 +1222,7 @@ static int next_option(int argc, char **argv, char **config_arg)
 	if (!config_file) {
 		opt = getopt_long(argc, argv,
 #ifdef _WIN32
-				  "C:c:Dde:F:g:hi:k:m:P:p:Q:qs:u:Vvx:",
+				  "bC:c:Dde:F:g:hi:k:m:P:p:Q:qs:u:Vvx:",
 #else
 				  "bC:c:Dde:F:g:hi:k:lm:P:p:Q:qSs:U:u:Vvx:",
 #endif
@@ -1452,7 +1462,7 @@ static int autocomplete(int argc, char **argv)
 
 		opt = getopt_long(argc, argv,
 #ifdef _WIN32
-				  "C:c:Dde:F:g:hi:k:m:P:p:Q:qs:u:Vvx:",
+				  "bC:c:Dde:F:g:hi:k:m:P:p:Q:qs:u:Vvx:",
 #else
 				  "bC:c:Dde:F:g:hi:k:lm:P:p:Q:qSs:U:u:Vvx:",
 #endif
@@ -1758,7 +1768,9 @@ static void fully_up_cb(void *_vpninfo)
 	struct openconnect_info *vpninfo = _vpninfo;
 
 	print_connection_info(vpninfo);
-#ifndef _WIN32
+#ifdef _WIN32
+	win32_background_notify_ready(vpninfo, pidfile, &wrote_pid);
+#else
 	if (background)
 		wrote_pid = background_self(vpninfo, pidfile);
 
@@ -1881,10 +1893,10 @@ int main(int argc, char *argv[])
 			break;
 
 		switch (opt) {
-#ifndef _WIN32
 		case 'b':
 			background = 1;
 			break;
+#ifndef _WIN32
 		case 'l':
 			use_syslog = 1;
 			break;
@@ -1950,9 +1962,12 @@ int main(int argc, char *argv[])
 		case OPT_CAFILE:
 			openconnect_set_cafile(vpninfo, dup_config_arg());
 			break;
-#ifndef _WIN32
 		case OPT_PIDFILE:
 			pidfile = keep_config_arg();
+			break;
+#ifdef _WIN32
+		case OPT_BACKGROUND_CHILD:
+			win32_background_set_child_event(keep_config_arg());
 			break;
 #endif
 		case OPT_PFS:
@@ -2015,12 +2030,20 @@ int main(int argc, char *argv[])
 			cookieonly = 3;
 			break;
 		case OPT_COOKIE_ON_STDIN:
+#ifdef _WIN32
+			if (win32_background_is_child())
+				break;
+#endif
 			read_stdin(&vpninfo->cookie, 0, 0);
 			/* If the cookie is empty, ignore it */
 			if (!*vpninfo->cookie)
 				vpninfo->cookie = NULL;
 			break;
 		case OPT_PASSWORD_ON_STDIN:
+#ifdef _WIN32
+			if (win32_background_is_child())
+				break;
+#endif
 			read_stdin(&password, 0, 0);
 			allow_stdin_read = 1;
 			break;
@@ -2294,6 +2317,13 @@ int main(int argc, char *argv[])
 		}
 	}
 
+#ifdef _WIN32
+	if (win32_background_is_child()) {
+		background = 0;
+		non_inter = 1;
+	}
+#endif
+
 	if (gai_overrides)
 		openconnect_override_getaddrinfo(vpninfo, gai_override_cb);
 
@@ -2391,6 +2421,9 @@ int main(int argc, char *argv[])
 	}
 	free(urlpath);
 
+#ifdef _WIN32
+	win32_background_apply_cookie(vpninfo);
+#endif
 	if (!vpninfo->cookie && openconnect_obtain_cookie(vpninfo)) {
 		if (vpninfo->csd_scriptname) {
 			unlink(vpninfo->csd_scriptname);
@@ -2431,6 +2464,15 @@ int main(int argc, char *argv[])
 			exit(0);
 		}
 	}
+
+#ifdef _WIN32
+	if (background && !win32_background_is_child()) {
+		ret = win32_spawn_background_child(argc, argv, vpninfo);
+		sig_vpninfo = NULL;
+		openconnect_vpninfo_free(vpninfo);
+		exit(ret);
+	}
+#endif
 	if ((ret = openconnect_make_cstp_connection(vpninfo)) != 0) {
 		fprintf(stderr, _("Creating SSL connection failed\n"));
 		goto out;
@@ -2471,10 +2513,13 @@ int main(int argc, char *argv[])
 		vpn_progress(vpninfo, PRG_INFO, _("User requested reconnect\n"));
 	}
 
-#ifndef _WIN32
-	if (wrote_pid)
+	if (wrote_pid && pidfile) {
+#ifdef _WIN32
+		win32_unlink_utf8(pidfile);
+#else
 		unlink(pidfile);
 #endif
+	}
 
  out:
 	switch (ret) {
