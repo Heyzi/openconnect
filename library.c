@@ -1929,3 +1929,13 @@ int openconnect_webview_load_changed(struct openconnect_info *vpninfo,
 
 	return -EOPNOTSUPP;
 }
+
+/* Library function to give the same behavior as the --no-external-auth
+   command line switch; it seems to be needed when the VPN server
+   disallows 'extra' cookies, like the 'strapkey' cookies. */
+void openconnect_set_no_external_auth(struct openconnect_info *vpninfo)
+{
+	if (!vpninfo)
+		return;
+	vpninfo->no_external_auth = 1;
+}
