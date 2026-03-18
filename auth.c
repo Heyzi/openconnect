@@ -773,12 +773,24 @@ static int handle_auth_form(struct openconnect_info *vpninfo, struct oc_auth_for
 		return ret;
 	}
  justpost:
-	ret = vpninfo->xmlpost ?
-	      xmlpost_append_form_opts(vpninfo, form, request_body) :
-	      append_form_opts(vpninfo, form, request_body);
-	if (!ret) {
-		*method = "POST";
-		*request_body_type = vpninfo->xmlpost ? "application/xml; charset=utf-8" : "application/x-www-form-urlencoded";
+	/* Use XML POST format if either xmlpost mode is active, or the server
+	 * sent opaque session data that must be returned. This is critical for
+	 * MFA challenge forms: the initial XML POST probe may fail (e.g. 404
+	 * at '/'), disabling xmlpost for the session, but the server still
+	 * sends <opaque> data with challenge forms that must be echoed back
+	 * for the challenge response to be processed correctly. */
+	if (vpninfo->xmlpost || vpninfo->opaque_srvdata) {
+		ret = xmlpost_append_form_opts(vpninfo, form, request_body);
+		if (!ret) {
+			*method = "POST";
+			*request_body_type = "application/xml; charset=utf-8";
+		}
+	} else {
+		ret = append_form_opts(vpninfo, form, request_body);
+		if (!ret) {
+			*method = "POST";
+			*request_body_type = "application/x-www-form-urlencoded";
+		}
 	}
 	return ret;
 }

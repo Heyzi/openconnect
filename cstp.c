@@ -1284,8 +1284,10 @@ void cstp_common_headers(struct openconnect_info *vpninfo, struct oc_text_buf *b
 	buf_append(buf, "Accept: */*\r\n");
 	buf_append(buf, "Accept-Encoding: identity\r\n");
 	buf_append(buf, "X-Transcend-Version: 1\r\n");
-	if (vpninfo->xmlpost)
-		buf_append(buf, "X-Aggregate-Auth: 1\r\n");
+	/* Always advertise aggregate auth support, even when xmlpost
+	 * was disabled by a failed probe. The server may still send
+	 * multi-step auth forms (e.g. MFA challenges) that need this. */
+	buf_append(buf, "X-Aggregate-Auth: 1\r\n");
 	if (vpninfo->try_http_auth)
 		buf_append(buf, "X-Support-HTTP-Auth: true\r\n");
 #ifdef HAVE_HPKE_SUPPORT
