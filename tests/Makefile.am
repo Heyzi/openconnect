@@ -69,7 +69,8 @@ EXTRA_DIST = certs/ca.pem certs/ca-key.pem certs/user-cert.pem $(USER_KEYS) $(US
 	softhsm2.conf.in softhsm ns.sh configs/test-dtls-psk.config \
 	scripts/vpnc-script scripts/vpnc-script-detect-disconnect \
 	suppressions.lsan fake-fortinet-server.py fake-f5-server.py fake-juniper-server.py \
-	fake-juniper-sso-server.py fake-tncc.py fake-gp-server.py fake-cisco-server.py
+	fake-juniper-sso-server.py fake-tncc.py fake-gp-server.py fake-cisco-server.py \
+	print-args.c run-script-test.c
 
 dist_check_SCRIPTS = autocompletion symbols
 TESTS = autocompletion symbols
@@ -147,9 +148,21 @@ TESTS_ENVIRONMENT = srcdir="$(srcdir)" \
 	pkcs11_keys="$(PKCS11_KEYS)" \
 	pkcs11_tokens="$(PKCS11_TOKENS)" \
 	EXEEXT=$(EXEEXT) \
+	PRINT_ARGS="$(abs_builddir)/print-args$(EXEEXT)" \
 	LSAN_OPTIONS=suppressions=$(srcdir)/suppressions.lsan
 
-C_TESTS = lzstest seqtest buftest
+AM_CPPFLAGS = -I$(top_builddir) -I$(top_srcdir)/json $(JSON_CFLAGS) $(LIBPROXY_CFLAGS) $(LIBXML2_CFLAGS)
+
+C_TESTS = lzstest seqtest buftest print-args
+
+print_args_SOURCES = print-args.c
+
+if !OPENCONNECT_WIN32
+C_TESTS += run-script-test
+
+run_script_test_SOURCES = run-script-test.c
+run_script_test_LDADD = $(SSL_LIBS)
+endif
 
 DISTCLEANFILES =
 
