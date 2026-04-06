@@ -912,11 +912,6 @@ out:
 
 static int run_hip_script(struct openconnect_info *vpninfo)
 {
-#if !defined(_WIN32) && !defined(__native_client__)
-	int pipefd[2];
-	int ret;
-	pid_t child;
-#endif
 
 	if (!vpninfo->csd_wrapper) {
 		/* Only warn once */
@@ -937,79 +932,15 @@ static int run_hip_script(struct openconnect_info *vpninfo)
 	}
 
 #if defined(_WIN32) || defined(__native_client__)
-	vpn_progress(vpninfo, PRG_ERR,
-		     _("Error: Running the 'HIP Report' script on this platform is not yet implemented.\n"));
-	return -EPERM;
-#else
-
-	vpn_progress(vpninfo, PRG_INFO,
-		     _("Trying to run HIP Trojan script '%s'.\n"),
-		     vpninfo->csd_wrapper);
-
-#ifdef __linux__
-	if (pipe2(pipefd, O_CLOEXEC))
-#endif
 	{
-		if (pipe(pipefd)) {
-			vpn_progress(vpninfo, PRG_ERR, _("Failed to create pipe for HIP script\n"));
-			return -EPERM;
-		}
-		set_fd_cloexec(pipefd[0]);
-		set_fd_cloexec(pipefd[1]);
-	}
-	child = fork();
-	if (child == -1) {
-		vpn_progress(vpninfo, PRG_ERR, _("Failed to fork for HIP script\n"));
-		return -EPERM;
-	} else if (child > 0) {
-		/* in parent: read report from child */
 		struct oc_text_buf *report_buf = buf_alloc();
-		char b[256];
-		int i, status;
-		close(pipefd[1]);
+		const char *hip_argv[16];
+		int i = 0, ret;
 
-		buf_truncate(report_buf);
-		while ((i = read(pipefd[0], b, sizeof(b))) > 0)
-			buf_append_bytes(report_buf, b, i);
+		if (!report_buf)
+			return -ENOMEM;
 
-		waitpid(child, &status, 0);
-		if (!WIFEXITED(status)) {
-			vpn_progress(vpninfo, PRG_ERR,
-						 _("HIP script '%s' exited abnormally\n"),
-						 vpninfo->csd_wrapper);
-			ret = -EINVAL;
-		} else if (WEXITSTATUS(status) != 0) {
-			vpn_progress(vpninfo, PRG_ERR,
-						 _("HIP script '%s' returned non-zero status: %d\n"),
-						 vpninfo->csd_wrapper, WEXITSTATUS(status));
-			ret = -EINVAL;
-		} else {
-			vpn_progress(vpninfo, PRG_INFO,
-				     _("HIP script '%s' completed successfully (report is %d bytes).\n"),
-				     vpninfo->csd_wrapper, report_buf->pos);
-
-			ret = check_or_submit_hip_report(vpninfo, report_buf->data);
-			if (ret < 0)
-				vpn_progress(vpninfo, PRG_ERR, _("HIP report submission failed.\n"));
-			else {
-				vpn_progress(vpninfo, PRG_INFO, _("HIP report submitted successfully.\n"));
-				ret = 0;
-			}
-		}
-		buf_free(report_buf);
-		return ret;
-	} else {
-		/* in child: run HIP script */
-		const char *hip_argv[32];
-		int i = 0;
-		close(pipefd[0]);
-		/* The duplicated fd does not have O_CLOEXEC */
-		dup2(pipefd[1], 1);
-
-		if (set_csd_user(vpninfo) < 0)
-			exit(1);
-
-		hip_argv[i++] = openconnect_utf8_to_legacy(vpninfo, vpninfo->csd_wrapper);
+		hip_argv[i++] = vpninfo->csd_wrapper;
 		hip_argv[i++] = "--cookie";
 		hip_argv[i++] = vpninfo->cookie;
 		if (vpninfo->ip_info.addr) {
@@ -1026,32 +957,78 @@ static int run_hip_script(struct openconnect_info *vpninfo)
 		hip_argv[i++] = gpst_os_name(vpninfo);
 		hip_argv[i++] = NULL;
 
-		/* XX: Sending the above parameters as --long-options was a mistake that was
-		 * based on overly-close replication of the invocation of the CSD script/binary
-		 * (see auth.c). In the case of CSD, some parameters *need* to be sent on the
-		 * command line to maintain compatibility with opaque Cisco CSD binaries.
-		 *
-		 * For GlobalProtect/HIP, we have no need to maintain compatibility with any
-		 * opaque binaries sent by the server.
-		 *
-		 * For anything that hasn't already shipped in a released version, we should use
-		 * environment variables as the standard way to send values to the HIP script,
-		 * particularly because it makes it easier for a shell script to parse them and
-		 * accept new ones.
-		 */
-		unsetenv("APP_VERSION");
-		if (vpninfo->csd_ticket)
-			if (setenv("APP_VERSION", vpninfo->csd_ticket, 1))
-				goto out;
-
-		execv(hip_argv[0], (char **)hip_argv);
-
-	out:
-		vpn_progress(vpninfo, PRG_ERR,
-				 _("Failed to exec HIP script %s\n"), hip_argv[0]);
-		exit(1);
+		ret = run_script(vpninfo, hip_argv, SCRIPT_CAPTURE_OUTPUT, report_buf);
+		if (ret == 0 && report_buf->pos > 0) {
+			vpn_progress(vpninfo, PRG_INFO,
+				     _("HIP script '%s' completed successfully (report is %d bytes).\n"),
+				     vpninfo->csd_wrapper, report_buf->pos);
+			ret = check_or_submit_hip_report(vpninfo, report_buf->data);
+			if (ret < 0)
+				vpn_progress(vpninfo, PRG_ERR, _("HIP report submission failed.\n"));
+			else {
+				vpn_progress(vpninfo, PRG_INFO, _("HIP report submitted successfully.\n"));
+				ret = 0;
+			}
+		} else if (ret == 0) {
+			vpn_progress(vpninfo, PRG_ERR,
+				     _("HIP script '%s' produced no output\n"),
+				     vpninfo->csd_wrapper);
+			ret = -EINVAL;
+		}
+		buf_free(report_buf);
+		return ret;
 	}
+#else
+	{
+		struct oc_text_buf *report_buf = buf_alloc();
+		const char *hip_argv[16];
+		int i = 0, ret;
 
+		if (!report_buf)
+			return -ENOMEM;
+
+		vpn_progress(vpninfo, PRG_INFO,
+			     _("Trying to run HIP Trojan script '%s'.\n"),
+			     vpninfo->csd_wrapper);
+
+		hip_argv[i++] = vpninfo->csd_wrapper;
+		hip_argv[i++] = "--cookie";
+		hip_argv[i++] = vpninfo->cookie;
+		if (vpninfo->ip_info.addr) {
+			hip_argv[i++] = "--client-ip";
+			hip_argv[i++] = vpninfo->ip_info.addr;
+		}
+		if (vpninfo->ip_info.addr6) {
+			hip_argv[i++] = "--client-ipv6";
+			hip_argv[i++] = vpninfo->ip_info.addr6;
+		}
+		hip_argv[i++] = "--md5";
+		hip_argv[i++] = vpninfo->csd_token;
+		hip_argv[i++] = "--client-os";
+		hip_argv[i++] = gpst_os_name(vpninfo);
+		hip_argv[i++] = NULL;
+
+		ret = run_script(vpninfo, hip_argv, SCRIPT_CAPTURE_OUTPUT | SCRIPT_DROP_PRIVS, report_buf);
+		if (ret == 0 && report_buf->pos > 0) {
+			vpn_progress(vpninfo, PRG_INFO,
+				     _("HIP script '%s' completed successfully (report is %d bytes).\n"),
+				     vpninfo->csd_wrapper, report_buf->pos);
+			ret = check_or_submit_hip_report(vpninfo, report_buf->data);
+			if (ret < 0)
+				vpn_progress(vpninfo, PRG_ERR, _("HIP report submission failed.\n"));
+			else {
+				vpn_progress(vpninfo, PRG_INFO, _("HIP report submitted successfully.\n"));
+				ret = 0;
+			}
+		} else if (ret == 0) {
+			vpn_progress(vpninfo, PRG_ERR,
+				     _("HIP script '%s' produced no output\n"),
+				     vpninfo->csd_wrapper);
+			ret = -EINVAL;
+		}
+		buf_free(report_buf);
+		return ret;
+	}
 #endif /* !_WIN32 && !__native_client__ */
 }
 

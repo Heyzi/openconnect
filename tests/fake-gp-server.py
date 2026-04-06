@@ -96,6 +96,7 @@ class TestConfiguration:
     saml_comments_only: int = None
     saml_needs_js: int = None
     esp: bool = True
+    hip_required: bool = False
 C = TestConfiguration()
 OUTSTANDING_SAML_TOKENS = set()
 
@@ -114,6 +115,7 @@ def configure():
         C.saml_comments_only = int(saml_comments_only) if saml_comments_only else None
         C.saml_needs_js = int(saml_needs_js) if saml_needs_js else None
         C.esp = int(esp) if esp else None
+        C.hip_required = bool(request.form.get('hip_required'))
         return '', 201
     else:
         return 'Current configuration of fake GP server configuration:\n{}\n'.format(C)
@@ -368,6 +370,15 @@ def getconfig():
 @check_form_against_session('user', 'portal', 'domain', 'authcookie', 'computer')
 def hipcheck():
     session.update(step='gateway-config')
+    needed = 'yes' if C.hip_required else 'no'
+    return '''<response><hip-report-needed>{}</hip-report-needed></response>'''.format(needed)
+
+
+# Respond to HIP report submission
+@app.route('/ssl-vpn/hipreport.esp', methods=('POST',))
+@check_form_against_session('user', 'portal', 'domain', 'authcookie', 'computer')
+def hipreport():
+    C.hip_required = False  # satisfied
     return '''<response><hip-report-needed>no</hip-report-needed></response>'''
 
 

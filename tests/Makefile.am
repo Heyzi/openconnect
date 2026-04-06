@@ -70,8 +70,7 @@ EXTRA_DIST = certs/ca.pem certs/ca-key.pem certs/user-cert.pem $(USER_KEYS) $(US
 	scripts/vpnc-script scripts/vpnc-script-detect-disconnect \
 	suppressions.lsan fake-fortinet-server.py fake-f5-server.py fake-juniper-server.py \
 	fake-juniper-sso-server.py fake-tncc.py fake-gp-server.py fake-cisco-server.py \
-	print-args.c run-script-test.c \
-	script-engine-test.c
+	fake-hip-wrapper.py print-args.c script-engine-test.c run-script-test.c
 
 dist_check_SCRIPTS = autocompletion symbols
 TESTS = autocompletion symbols
@@ -89,7 +88,7 @@ endif
 dist_check_SCRIPTS += auth-username-pass auth-certificate auth-nonascii cert-fingerprint \
 	id-test obsolete-server-crypto pfs auth-swtpm auth-hwtpm fortinet-auth-and-config \
 	f5-auth-and-config juniper-auth juniper-sso-auth gp-auth-and-config auth-pkcs11 \
-	auth-multicert
+	auth-multicert gp-hip-script
 
 if HAVE_CWRAP
 TESTS += auth-username-pass auth-certificate auth-nonascii cert-fingerprint id-test \
@@ -112,7 +111,7 @@ endif
 if HAVE_PYTHON36_FLASK
 TESTS += juniper-sso-auth auth-multicert
 if HAVE_PYTHON37_DATACLASSES
-TESTS += juniper-auth gp-auth-and-config f5-auth-and-config fortinet-auth-and-config
+TESTS += juniper-auth gp-auth-and-config gp-hip-script f5-auth-and-config fortinet-auth-and-config
 endif
 endif
 
@@ -138,6 +137,8 @@ endif # OPENCONNECT_OPENSSL
 endif # TEST_PKCS11
 endif # HAVE_CWRAP
 
+AM_CPPFLAGS = -I$(top_builddir) -I$(top_srcdir)/json $(JSON_CFLAGS) $(LIBPROXY_CFLAGS) $(LIBXML2_CFLAGS)
+
 TESTS_ENVIRONMENT = srcdir="$(srcdir)" \
 	top_srcdir="$(top_srcdir)" \
 	top_builddir="$(top_builddir)" \
@@ -151,8 +152,6 @@ TESTS_ENVIRONMENT = srcdir="$(srcdir)" \
 	EXEEXT=$(EXEEXT) \
 	PRINT_ARGS="$(abs_builddir)/print-args$(EXEEXT)" \
 	LSAN_OPTIONS=suppressions=$(srcdir)/suppressions.lsan
-
-AM_CPPFLAGS = -I$(top_builddir) -I$(top_srcdir)/json $(JSON_CFLAGS) $(LIBPROXY_CFLAGS) $(LIBXML2_CFLAGS)
 
 C_TESTS = lzstest seqtest buftest script-engine-test print-args
 
