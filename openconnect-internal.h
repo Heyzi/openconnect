@@ -1253,7 +1253,6 @@ int install_vpn_opts(struct openconnect_info *vpninfo, struct oc_vpn_option *opt
 
 #define SCRIPT_CAPTURE_OUTPUT	(1<<0)	/* capture stdout into buf */
 #define SCRIPT_DROP_PRIVS	(1<<1)	/* drop to uid_csd before exec */
-#define SCRIPT_USE_SHELL	(1<<2)	/* wrap in /bin/sh -c (vpnc-script) */
 #define SCRIPT_REDIR_STDOUT	(1<<3)	/* dup2(2,1) -- redirect stdout to stderr */
 #define SCRIPT_CSD_ENV		(1<<4)	/* use csd_env instead of script_env */
 

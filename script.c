@@ -683,7 +683,7 @@ int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
 	argv[0] = vpninfo->vpnc_script;
 	argv[1] = NULL;
 
-	return run_script(vpninfo, argv, SCRIPT_USE_SHELL, NULL);
+	return run_script(vpninfo, argv, 0, NULL);
 }
 #else
 /* Must only be run after fork(). */
@@ -754,21 +754,35 @@ int run_script(struct openconnect_info *vpninfo, const char **argv,
 		else
 			apply_script_env(vpninfo->script_env);
 
-		if (flags & SCRIPT_USE_SHELL) {
-			char *script = openconnect_utf8_to_legacy(vpninfo, argv[0]);
-			execl("/bin/sh", "/bin/sh", "-c", script, NULL);
-		} else {
+		{
 			const char *engine = script_engine(vpninfo->script_engines, argv[0]);
 			if (engine) {
-				/* user mapped this extension to a specific interpreter;
-				 * use execvp so bare names like 'python3' are found via PATH */
-				const char *newargv[34]; /* engine + up to 32 args + NULL */
-				int i, n;
-				for (n = 0; argv[n] && n < 32; n++);
-				newargv[0] = engine;
-				for (i = 0; i <= n; i++)
-					newargv[i+1] = argv[i];
-				execvp(newargv[0], (char **)newargv);
+				/* engine may be "prog arg1 arg2"; parse respecting quotes */
+				const char *newargv[34];
+				char *eng = strdup(engine);
+				int ei = 0, n;
+				char *p = eng;
+				if (!eng)
+					exit(1);
+				while (*p && ei < 30) {
+					while (*p == ' ') p++;
+					if (!*p) break;
+					if (*p == '"' || *p == '\'') {
+						char q = *p++;
+						newargv[ei++] = p;
+						while (*p && *p != q) p++;
+						if (*p) *p++ = '\0';
+					} else {
+						newargv[ei++] = p;
+						while (*p && *p != ' ') p++;
+						if (*p) *p++ = '\0';
+					}
+				}
+				for (n = 0; argv[n] && ei < 32; n++)
+					newargv[ei++] = argv[n];
+				newargv[ei] = NULL;
+				if (ei > 0)
+					execvp(newargv[0], (char **)newargv);
 			} else {
 				execvp(argv[0], (char **)argv);
 			}
@@ -834,6 +848,6 @@ int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
 	argv[0] = vpninfo->vpnc_script;
 	argv[1] = NULL;
 
-	return run_script(vpninfo, argv, SCRIPT_USE_SHELL, NULL);
+	return run_script(vpninfo, argv, 0, NULL);
 }
 #endif

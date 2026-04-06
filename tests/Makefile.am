@@ -70,7 +70,8 @@ EXTRA_DIST = certs/ca.pem certs/ca-key.pem certs/user-cert.pem $(USER_KEYS) $(US
 	scripts/vpnc-script scripts/vpnc-script-detect-disconnect \
 	suppressions.lsan fake-fortinet-server.py fake-f5-server.py fake-juniper-server.py \
 	fake-juniper-sso-server.py fake-tncc.py fake-gp-server.py fake-cisco-server.py \
-	print-args.c run-script-test.c
+	print-args.c run-script-test.c \
+	script-engine-test.c
 
 dist_check_SCRIPTS = autocompletion symbols
 TESTS = autocompletion symbols
@@ -153,7 +154,9 @@ TESTS_ENVIRONMENT = srcdir="$(srcdir)" \
 
 AM_CPPFLAGS = -I$(top_builddir) -I$(top_srcdir)/json $(JSON_CFLAGS) $(LIBPROXY_CFLAGS) $(LIBXML2_CFLAGS)
 
-C_TESTS = lzstest seqtest buftest print-args
+C_TESTS = lzstest seqtest buftest script-engine-test print-args
+
+script_engine_test_SOURCES = script-engine-test.c
 
 print_args_SOURCES = print-args.c
 

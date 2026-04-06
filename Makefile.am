@@ -40,7 +40,7 @@ openconnect_SOURCES += openconnect.rc
 sbin_SCRIPTS += vpnc-script-win.js
 endif
 library_srcs = ssl.c http.c textbuf.c http-auth.c auth-common.c \
-	auth-html.c library.c compat.c lzs.c mainloop.c script.c \
+	auth-html.c library.c compat.c lzs.c mainloop.c script.c script-engine.c \
 	ntlm.c digest.c mtucalc.c openconnect-internal.h
 lib_srcs_cisco = auth.c cstp.c hpke.c multicert.c
 lib_srcs_juniper = oncp.c lzo.c auth-juniper.c
