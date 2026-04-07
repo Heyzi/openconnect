@@ -755,34 +755,12 @@ int run_script(struct openconnect_info *vpninfo, const char **argv,
 			apply_script_env(vpninfo->script_env);
 
 		{
+			const char *newargv[34];
 			const char *engine = script_engine(vpninfo->script_engines, argv[0]);
 			if (engine) {
-				/* engine may be "prog arg1 arg2"; parse respecting quotes */
-				const char *newargv[34];
-				char *eng = strdup(engine);
-				int ei = 0, n;
-				char *p = eng;
-				if (!eng)
-					exit(1);
-				while (*p && ei < 30) {
-					while (*p == ' ') p++;
-					if (!*p) break;
-					if (*p == '"' || *p == '\'') {
-						char q = *p++;
-						newargv[ei++] = p;
-						while (*p && *p != q) p++;
-						if (*p) *p++ = '\0';
-					} else {
-						newargv[ei++] = p;
-						while (*p && *p != ' ') p++;
-						if (*p) *p++ = '\0';
-					}
-				}
-				for (n = 0; argv[n] && ei < 32; n++)
-					newargv[ei++] = argv[n];
-				newargv[ei] = NULL;
-				if (ei > 0)
-					execvp(newargv[0], (char **)newargv);
+				char engbuf[strlen(engine) + 1];
+				build_script_argv(engine, argv[0], argv + 1, newargv, 34, engbuf);
+				execvp(newargv[0], (char **)newargv);
 			} else {
 				execvp(argv[0], (char **)argv);
 			}

@@ -238,32 +238,13 @@ static int tncc_preauth(struct openconnect_info *vpninfo)
 		}
 
 		{
-			/* same engine lookup as run_script(); TNCC can't use run_script()
-			 * directly because it needs stdin connected to the socketpair */
+			/* TNCC can't use run_script() -- needs stdin on the socketpair */
 			const char *engine = script_engine(vpninfo->script_engines, vpninfo->csd_wrapper);
 			if (engine) {
-				char *eng = strdup(engine);
 				const char *eargv[34];
-				int ei = 0;
-				char *p = eng;
-				if (!eng) exit(1);
-				while (*p && ei < 30) {
-					while (*p == ' ') p++;
-					if (!*p) break;
-					if (*p == '"' || *p == '\'') {
-						char q = *p++;
-						eargv[ei++] = p;
-						while (*p && *p != q) p++;
-						if (*p) *p++ = '\0';
-					} else {
-						eargv[ei++] = p;
-						while (*p && *p != ' ') p++;
-						if (*p) *p++ = '\0';
-					}
-				}
-				eargv[ei++] = vpninfo->csd_wrapper;
-				eargv[ei++] = vpninfo->hostname;
-				eargv[ei] = NULL;
+				const char *extra[] = { vpninfo->hostname, NULL };
+				char engbuf[strlen(engine) + 1];
+				build_script_argv(engine, vpninfo->csd_wrapper, extra, eargv, 34, engbuf);
 				execvp(eargv[0], (char **)eargv);
 			} else {
 				execl(vpninfo->csd_wrapper, vpninfo->csd_wrapper, vpninfo->hostname, NULL);

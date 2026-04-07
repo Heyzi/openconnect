@@ -25,9 +25,45 @@
 #include <string.h>
 #include <strings.h>
 
-/* declaration provided in openconnect-internal.h for callers;
+/* declarations provided in openconnect-internal.h for callers;
  * repeated here to satisfy -Wmissing-declarations */
 const char *script_engine(struct oc_vpn_option *engines, const char *path);
+int build_script_argv(const char *engine, const char *path,
+		      const char **extra_args, const char **argv, int maxargs,
+		      char *engbuf);
+
+/* Build argv for execvp from engine string + script path + extra args.
+ * engbuf must be strlen(engine)+1. extra_args is a NULL-terminated list
+ * of args after path (may be NULL). Returns arg count. */
+int build_script_argv(const char *engine, const char *path,
+		      const char **extra_args, const char **argv, int maxargs,
+		      char *engbuf)
+{
+	char *p;
+	int n = 0, i;
+
+	strcpy(engbuf, engine);
+	p = engbuf;
+	while (*p && n < maxargs - 2) {
+		while (*p == ' ') p++;
+		if (!*p) break;
+		if (*p == '"' || *p == '\'') {
+			char q = *p++;
+			argv[n++] = p;
+			while (*p && *p != q) p++;
+			if (*p) *p++ = '\0';
+		} else {
+			argv[n++] = p;
+			while (*p && *p != ' ') p++;
+			if (*p) *p++ = '\0';
+		}
+	}
+	argv[n++] = path;
+	for (i = 0; extra_args && extra_args[i] && n < maxargs - 1; i++)
+		argv[n++] = extra_args[i];
+	argv[n] = NULL;
+	return n;
+}
 
 const char *script_engine(struct oc_vpn_option *engines, const char *path)
 {

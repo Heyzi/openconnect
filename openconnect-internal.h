@@ -1257,6 +1257,9 @@ int install_vpn_opts(struct openconnect_info *vpninfo, struct oc_vpn_option *opt
 #define SCRIPT_CSD_ENV		(1<<4)	/* use csd_env instead of script_env */
 
 const char *script_engine(struct oc_vpn_option *engines, const char *path);
+int build_script_argv(const char *engine, const char *path,
+		      const char **extra_args, const char **argv, int maxargs,
+		      char *engbuf);
 int run_script(struct openconnect_info *vpninfo, const char **argv,
 	       unsigned int flags, struct oc_text_buf *output);
 
