@@ -489,6 +489,15 @@ int openconnect_setup_tun_script(struct openconnect_info *vpninfo,
 		close(fds[0]);
 		script_setenv_int(vpninfo, "VPNFD", fds[1]);
 		apply_script_env(vpninfo->script_env);
+		{
+			const char *engine = script_engine(vpninfo->script_engines, vpninfo->vpnc_script);
+			if (engine && strcmp(engine, "/bin/sh")) {
+				const char *argv[34];
+				char engbuf[strlen(engine) + 1];
+				build_script_argv(engine, vpninfo->vpnc_script, NULL, argv, 34, engbuf);
+				execvp(argv[0], (char **)argv);
+			}
+		}
 		execl("/bin/sh", "/bin/sh", "-c", vpninfo->vpnc_script, NULL);
 		perror(_("execl"));
 		exit(1);

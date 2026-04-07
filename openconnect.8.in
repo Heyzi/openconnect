@@ -355,9 +355,10 @@ May be specified multiple times for different extensions.
 For example,
 .B \-\-script\-engine=py:python3
 causes
-.B \-\-script
+.B \-\-script ,
+.B \-\-csd\-wrapper ,
 and
-.B \-\-csd\-wrapper
+.B \-\-script\-tun
 arguments ending in
 .B .py
 to be run via
