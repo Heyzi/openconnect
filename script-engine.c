@@ -81,6 +81,10 @@ const char *script_engine(struct oc_vpn_option *engines, const char *path)
 #ifdef _WIN32
 	if (dot && !strcasecmp(dot, ".js"))
 		return "cscript.exe /e:JScript";
+	if (dot && !strcasecmp(dot, ".vbs"))
+		return "cscript.exe /e:VBScript";
+	if (dot && !strcasecmp(dot, ".ps1"))
+		return "powershell.exe -File";
 	if (dot && !strcasecmp(dot, ".py"))
 		return "python.exe";
 	if (dot && !strcasecmp(dot, ".exe"))

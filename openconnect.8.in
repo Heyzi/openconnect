@@ -367,6 +367,12 @@ Built-in defaults: on Windows,
 .B .js
 uses
 .BR "cscript.exe /e:JScript" ,
+.B .vbs
+uses
+.BR "cscript.exe /e:VBScript" ,
+.B .ps1
+uses
+.BR "powershell.exe -File" ,
 .B .py
 uses
 .BR python.exe ,
