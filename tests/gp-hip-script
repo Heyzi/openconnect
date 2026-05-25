@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+# Test run_hip_script() via fake GP server with HIP required.
+# Verifies that --csd-wrapper is invoked with the expected arguments
+# and that the HIP report is submitted successfully.
+
+PRELOAD=1
+srcdir=${srcdir:-.}
+top_builddir=${top_builddir:-..}
+
+. `dirname $0`/common.sh
+
+FINGERPRINT="--servercert=pin-sha256:xp3scfzy3rO"
+CERT=$certdir/server-cert.pem
+KEY=$certdir/server-key.pem
+
+echo "Testing GP HIP script invocation ..."
+
+OCSERV=${srcdir}/fake-gp-server.py
+launch_simple_sr_server $ADDRESS 443 $CERT $KEY >/dev/null 2>&1
+PID=$!
+wait_server $PID
+
+SERVURL="https://$ADDRESS:443"
+CLIENT="$OPENCONNECT -q --protocol=gp $FINGERPRINT -u test"
+RECORD=$(mktemp)
+export LD_PRELOAD=libsocket_wrapper.so
+export HIP_WRAPPER_RECORD="$RECORD"
+
+echo "Configuring fake server to require HIP report."
+curl -sk $SERVURL/CONFIGURE -d hip_required=1
+
+echo -n "Authenticating and submitting HIP report via wrapper script... "
+( echo "test" | $CLIENT \
+    --csd-wrapper ${srcdir}/fake-hip-wrapper.py \
+    $SERVURL/portal 2>/dev/null ) ||
+    test $? = 2 ||
+    fail $PID "Unexpected failure during GP auth with HIP wrapper"
+
+# verify wrapper was called with expected args
+if [ ! -s "$RECORD" ]; then
+    fail $PID "HIP wrapper was not invoked (record file empty)"
+fi
+
+if ! grep -q -- "--md5" "$RECORD"; then
+    fail $PID "HIP wrapper was not called with --md5 argument"
+fi
+
+if ! grep -q -- "--client-ip" "$RECORD"; then
+    fail $PID "HIP wrapper was not called with --client-ip argument"
+fi
+
+echo ok
+
+rm -f "$RECORD"
+cleanup
+
+exit 0

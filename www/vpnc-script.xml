@@ -55,6 +55,20 @@ on making it simple to connect to a VPN with OpenConnect, while
 customizing routing so that only a limited subset of traffic flows
 through the VPN. (Sometimes known as a "split tunnel.")</p>
 
+<h1>Script interpreter mapping</h1>
+
+<p>The <tt>--script-engine=EXT:PROG</tt> option maps a file extension to an
+interpreter. For example, <tt>--script-engine=py:python3</tt> causes
+<tt>--script</tt> and <tt>--csd-wrapper</tt> arguments ending in <tt>.py</tt>
+to be run via <tt>python3</tt>. The extension is specified without a leading
+dot. The option may be specified multiple times for different extensions.</p>
+
+<p>Built-in defaults on Windows: <tt>.js</tt> uses
+<tt>cscript.exe /e:JScript</tt>, <tt>.py</tt> uses <tt>python.exe</tt>, and
+<tt>.exe</tt> files are executed directly. On other platforms: <tt>.sh</tt>
+uses <tt>/bin/sh</tt>, and other files are executed directly (relying on the
+shebang line).</p>
+
 <h1>Windows</h1>
 
 <p>On Windows, the default configuration of OpenConnect will look for

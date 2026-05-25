@@ -174,6 +174,7 @@ enum {
 	OPT_COOKIE_ON_STDIN,
 	OPT_CSD_USER,
 	OPT_CSD_WRAPPER,
+	OPT_SCRIPT_ENGINE,
 	OPT_CIPHERSUITES,
 	OPT_DISABLE_IPV6,
 	OPT_DTLS_CIPHERS,
@@ -240,8 +241,9 @@ static const struct option long_options[] = {
 	OPTION("script-tun", 0, 'S'),
 	OPTION("syslog", 0, 'l'),
 	OPTION("csd-user", 1, OPT_CSD_USER),
-	OPTION("csd-wrapper", 1, OPT_CSD_WRAPPER),
 #endif
+	OPTION("csd-wrapper", 1, OPT_CSD_WRAPPER),
+	OPTION("script-engine", 1, OPT_SCRIPT_ENGINE),
 #if defined(HAVE_POSIX_SPAWN) || defined(_WIN32)
 	OPTION("external-browser", 1, OPT_EXT_BROWSER),
 #endif
@@ -1121,8 +1123,9 @@ static void usage(void)
 	printf("\n%s:\n", _("Trojan binary (CSD) execution"));
 #ifndef _WIN32
 	printf("      --csd-user=USER             %s\n", _("Drop privileges during trojan execution"));
-	printf("      --csd-wrapper=SCRIPT        %s\n", _("Run SCRIPT instead of trojan binary"));
 #endif
+	printf("      --csd-wrapper=SCRIPT        %s\n", _("Run SCRIPT instead of trojan binary"));
+	printf("      --script-engine=EXT:PROG    %s\n", _("Use PROG to run scripts with extension EXT"));
 	printf("      --force-trojan=INTERVAL     %s\n", _("Set minimum interval between trojan runs (in seconds)"));
 
 	printf("\n%s:\n", _("Server bugs"));
@@ -1490,6 +1493,7 @@ static int autocomplete(int argc, char **argv)
 			case 's': /* --script */
 			case OPT_CSD_WRAPPER: /* --csd-wrapper */
 			case OPT_EXT_BROWSER: /* --external-browser */
+			case OPT_SCRIPT_ENGINE: /* --script-engine */
 				autocomplete_special("EXECUTABLE", comp_opt, prefixlen, NULL);
 				break;
 
@@ -1900,10 +1904,50 @@ int main(int argc, char *argv[])
 			get_uids(config_arg, &vpninfo->uid_csd, &vpninfo->gid_csd);
 			vpninfo->uid_csd_given = 1;
 			break;
+#endif /* !_WIN32 */
 		case OPT_CSD_WRAPPER:
 			vpninfo->csd_wrapper = keep_config_arg();
 			break;
-#endif /* !_WIN32 */
+		case OPT_SCRIPT_ENGINE: {
+			const char *sep;
+			struct oc_vpn_option *e;
+			assert_nonnull_config_arg("script-engine", config_arg);
+			sep = strchr(config_arg, ':');
+			if (!sep) {
+				fprintf(stderr, _("Missing colon in script-engine option\n"));
+				exit(1);
+			}
+			e = malloc(sizeof(*e));
+			if (!e) {
+				fprintf(stderr, _("Failed to allocate memory\n"));
+				exit(1);
+			}
+			/* prepend dot so e->option matches strrchr(path, '.') output;
+			 * accept either "qjs" or ".qjs" from the user */
+			{
+				int extlen = sep - config_arg;
+				char *ext = malloc(extlen + 1);
+				if (!ext) { fprintf(stderr, _("Failed to allocate memory\n")); exit(1); }
+				memcpy(ext, config_arg, extlen);
+				ext[extlen] = '\0';
+				if (ext[0] == '.') {
+					e->option = ext;
+				} else {
+					if (asprintf(&e->option, ".%s", ext) == -1) {
+						fprintf(stderr, _("Failed to allocate memory\n")); exit(1);
+					}
+					free(ext);
+				}
+			}
+			e->value = strdup(sep + 1);
+			if (!e->option || !e->value) {
+				fprintf(stderr, _("Failed to allocate memory\n"));
+				exit(1);
+			}
+			e->next = vpninfo->script_engines;
+			vpninfo->script_engines = e;
+			break;
+		}
 		case 'F':
 			add_form_field(keep_config_arg());
 			break;

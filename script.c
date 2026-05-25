@@ -550,20 +550,8 @@ static wchar_t *create_script_env(struct openconnect_info *vpninfo)
 	return newenv;
 }
 
-static const char *script_engine(const char *path) {
-	const char *dot = strrchr(path, '.');
-	if (dot && strcasecmp(dot, ".js") == 0)
-		/*
-		 * The "/e:JScript" argument forces the Windows script host
-		 * to use the JScript engine. This bypasses rogue programs that
-		 * register as handlers for the ".js" file extension but fail
-		 * to run the script.
-		 */
-		return "cscript.exe /e:JScript";
-	return "cscript.exe";
-}
-
-int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
+int run_script(struct openconnect_info *vpninfo, const char **argv,
+	       unsigned int flags, struct oc_text_buf *output)
 {
 	wchar_t *script_w;
 	wchar_t *script_env;
@@ -573,56 +561,87 @@ int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
 	PROCESS_INFORMATION pi;
 	STARTUPINFOW si;
 	DWORD cpflags, exit_status;
-
-	if (!vpninfo->vpnc_script || vpninfo->script_tun)
-		return 0;
+	HANDLE hread = NULL, hwrite = NULL;
 
 	memset(&si, 0, sizeof(si));
 	si.cb = sizeof(si);
-	/* probably superfluous */
 	si.dwFlags = STARTF_USESHOWWINDOW;
 	si.wShowWindow = SW_HIDE;
 
-	script_setenv(vpninfo, "reason", reason, 0, 0);
+	if ((flags & SCRIPT_CAPTURE_OUTPUT) && output) {
+		SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+		if (!CreatePipe(&hread, &hwrite, &sa, 0)) {
+			vpn_progress(vpninfo, PRG_ERR, _("Failed to create pipe for script\n"));
+			return -EIO;
+		}
+		SetHandleInformation(hread, HANDLE_FLAG_INHERIT, 0);
+		si.dwFlags |= STARTF_USESTDHANDLES;
+		si.hStdOutput = hwrite;
+		si.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+		si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+	}
 
-	if (asprintf(&cmd, "%s \"%s\"", script_engine(vpninfo->vpnc_script), vpninfo->vpnc_script) == -1)
-		return 0;
+	/* build "engine script arg1 arg2 ..." command string */
+	{
+		struct oc_text_buf *cmdbuf = buf_alloc();
+		const char *engine = script_engine(vpninfo->script_engines, argv[0]);
+		int i;
+		if (engine)
+			buf_append(cmdbuf, "%s \"%s\"", engine, argv[0]);
+		else
+			buf_append(cmdbuf, "\"%s\"", argv[0]);
+		for (i = 1; argv[i]; i++)
+			buf_append(cmdbuf, " %s", argv[i]);
+		if (buf_error(cmdbuf)) {
+			buf_free(cmdbuf);
+			return -ENOMEM;
+		}
+		cmd = cmdbuf->data;
+		cmdbuf->data = NULL;
+		buf_free(cmdbuf);
+	}
 
 	nr_chars = MultiByteToWideChar(CP_UTF8, 0, cmd, -1, NULL, 0);
 	script_w = malloc(nr_chars * sizeof(wchar_t));
-
 	if (!script_w) {
 		free(cmd);
 		return -ENOMEM;
 	}
-
 	MultiByteToWideChar(CP_UTF8, 0, cmd, -1, script_w, nr_chars);
-
 	free(cmd);
 
 	script_env = create_script_env(vpninfo);
 
 	cpflags = CREATE_UNICODE_ENVIRONMENT;
-	/* If we're running from a console, let the script use it too. */
 	if (!GetConsoleWindow())
+		/* If we're running from a console, let the script use it too. */
 		cpflags |= CREATE_NO_WINDOW;
 
-	if (CreateProcessW(NULL, script_w, NULL, NULL, FALSE, cpflags,
-			   script_env, NULL, &si, &pi)) {
-		ret = WaitForSingleObject(pi.hProcess,10000);
+	if (CreateProcessW(NULL, script_w, NULL, NULL,
+			   (flags & SCRIPT_CAPTURE_OUTPUT) ? TRUE : FALSE,
+			   cpflags, script_env, NULL, &si, &pi)) {
+		if (flags & SCRIPT_CAPTURE_OUTPUT) {
+			char b[256];
+			DWORD n;
+			CloseHandle(hwrite);
+			hwrite = NULL;
+			while (ReadFile(hread, b, sizeof(b), &n, NULL) && n > 0)
+				buf_append_bytes(output, b, n);
+			CloseHandle(hread);
+			hread = NULL;
+		}
+		ret = WaitForSingleObject(pi.hProcess, 10000);
 		if (!GetExitCodeProcess(pi.hProcess, &exit_status)) {
 			vpn_progress(vpninfo, PRG_ERR,
 				     _("Failed to get script exit status: %s\n"),
 				     openconnect__win32_strerror(GetLastError()));
 			ret = -EIO;
 		} else if (exit_status > 0 && exit_status != STILL_ACTIVE) {
-			/* STILL_ACTIVE == 259. That means that a perfectly normal positive integer return value overlaps with
-			 * an exceptional condition. Don't blame me. I didn't design this.
-			 * https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess#remarks
-			 */
+			/* STILL_ACTIVE == 259, which overlaps with a normal exit code.
+			 * https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess#remarks */
 			vpn_progress(vpninfo, PRG_ERR,
 				     _("Script '%s' returned error %ld\n"),
-				     vpninfo->vpnc_script, exit_status);
+				     argv[0], exit_status);
 			ret = -EIO;
 		}
 		CloseHandle(pi.hThread);
@@ -637,20 +656,34 @@ int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
 		ret = -EIO;
 	}
 
+	if (hread)  CloseHandle(hread);
+	if (hwrite) CloseHandle(hwrite);
 	free(script_env);
 
 	if (ret < 0) {
 		char *errstr = openconnect__win32_strerror(GetLastError());
 		vpn_progress(vpninfo, PRG_ERR,
-			     _("Failed to spawn script '%s' for %s: %s\n"),
-			     vpninfo->vpnc_script, reason, errstr);
+			     _("Failed to spawn script '%s': %s\n"),
+			     argv[0], errstr);
 		free(errstr);
-		goto cleanup;
 	}
-
- cleanup:
 	free(script_w);
 	return ret;
+}
+
+int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
+{
+	const char *argv[3];
+
+	if (!vpninfo->vpnc_script || vpninfo->script_tun)
+		return 0;
+
+	script_setenv(vpninfo, "reason", reason, 0, 0);
+
+	argv[0] = vpninfo->vpnc_script;
+	argv[1] = NULL;
+
+	return run_script(vpninfo, argv, 0, NULL);
 }
 #else
 /* Must only be run after fork(). */
@@ -667,51 +700,132 @@ int apply_script_env(struct oc_vpn_option *envs)
 	return 0;
 }
 
-int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
+int run_script(struct openconnect_info *vpninfo, const char **argv,
+	       unsigned int flags, struct oc_text_buf *output)
 {
 	int ret;
 	pid_t pid;
+	int pipefd[2];
 
-	if (!vpninfo->vpnc_script || vpninfo->script_tun)
-		return 0;
+	if ((flags & SCRIPT_CAPTURE_OUTPUT) && output) {
+#ifdef __linux__
+		if (pipe2(pipefd, O_CLOEXEC))
+#endif
+		{
+			if (pipe(pipefd)) {
+				vpn_progress(vpninfo, PRG_ERR, _("Failed to create pipe for script\n"));
+				return -EPERM;
+			}
+			set_fd_cloexec(pipefd[0]);
+			set_fd_cloexec(pipefd[1]);
+		}
+	}
 
 	pid = fork();
 	if (pid == 0) {
-		/* Child */
 		if (setpgid(0, 0) < 0)
 			perror(_("setpgid"));
 
-		char *script = openconnect_utf8_to_legacy(vpninfo, vpninfo->vpnc_script);
+		if ((flags & SCRIPT_CAPTURE_OUTPUT) && output) {
+			close(pipefd[0]);
+			dup2(pipefd[1], 1);
+		}
 
-		apply_script_env(vpninfo->script_env);
+		if (flags & SCRIPT_REDIR_STDOUT) {
+			/* redirect stdout to stderr so it doesn't interfere with
+			 * output parsing; also cope with gnome-shell closing stderr */
+			if (ferror(stderr)) {
+				int nulfd = open("/dev/null", O_WRONLY);
+				if (nulfd >= 0) {
+					dup2(nulfd, 2);
+					close(nulfd);
+				}
+			}
+			dup2(2, 1);
+		}
 
-		setenv("reason", reason, 1);
+		if (flags & SCRIPT_DROP_PRIVS) {
+			if (set_csd_user(vpninfo) < 0)
+				exit(1);
+		}
 
-		execl("/bin/sh", "/bin/sh", "-c", script, NULL);
+		if (flags & SCRIPT_CSD_ENV)
+			apply_script_env(vpninfo->csd_env);
+		else
+			apply_script_env(vpninfo->script_env);
+
+		{
+			const char *newargv[34];
+			const char *engine = script_engine(vpninfo->script_engines, argv[0]);
+			if (engine) {
+				char engbuf[strlen(engine) + 1];
+				build_script_argv(engine, argv[0], argv + 1, newargv, 34, engbuf);
+				execvp(newargv[0], (char **)newargv);
+			} else {
+				execvp(argv[0], (char **)argv);
+			}
+		}
 		exit(127);
 	}
-	if (pid == -1 || waitpid(pid, &ret, 0) == -1) {
+
+	if ((flags & SCRIPT_CAPTURE_OUTPUT) && output)
+		close(pipefd[1]);
+
+	if (pid == -1) {
+		int err = errno;
+		if ((flags & SCRIPT_CAPTURE_OUTPUT) && output)
+			close(pipefd[0]);
+		vpn_progress(vpninfo, PRG_ERR,
+			     _("Failed to spawn script '%s': %s\n"),
+			     argv[0], strerror(err));
+		return -err;
+	}
+
+	if ((flags & SCRIPT_CAPTURE_OUTPUT) && output) {
+		char b[256];
+		int i;
+		while ((i = read(pipefd[0], b, sizeof(b))) > 0)
+			buf_append_bytes(output, b, i);
+		close(pipefd[0]);
+	}
+
+	if (waitpid(pid, &ret, 0) == -1) {
 		int err = errno;
 		vpn_progress(vpninfo, PRG_ERR,
-			     _("Failed to spawn script '%s' for %s: %s\n"),
-			     vpninfo->vpnc_script, reason, strerror(err));
+			     _("Failed to wait for script '%s': %s\n"),
+			     argv[0], strerror(err));
 		return -err;
 	}
 
 	if (!WIFEXITED(ret)) {
 		vpn_progress(vpninfo, PRG_ERR,
 			     _("Script '%s' exited abnormally (%x)\n"),
-			       vpninfo->vpnc_script, ret);
-		return -EIO;
+			     argv[0], ret);
+		return -EINVAL;
 	}
 
 	ret = WEXITSTATUS(ret);
 	if (ret) {
 		vpn_progress(vpninfo, PRG_ERR,
 			     _("Script '%s' returned error %d\n"),
-			     vpninfo->vpnc_script, ret);
+			     argv[0], ret);
 		return -EIO;
 	}
 	return 0;
+}
+
+int script_config_tun(struct openconnect_info *vpninfo, const char *reason)
+{
+	const char *argv[2];
+
+	if (!vpninfo->vpnc_script || vpninfo->script_tun)
+		return 0;
+
+	script_setenv(vpninfo, "reason", reason, 0, 0);
+
+	argv[0] = vpninfo->vpnc_script;
+	argv[1] = NULL;
+
+	return run_script(vpninfo, argv, 0, NULL);
 }
 #endif

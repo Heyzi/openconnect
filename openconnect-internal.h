@@ -524,6 +524,7 @@ struct openconnect_info {
 	char *dtls_ciphers;
 	char *dtls12_ciphers;
 	char *csd_wrapper;
+	struct oc_vpn_option *script_engines; /* --script-engine mappings */
 	int trojan_interval;
 	time_t last_trojan;
 	int no_http_keepalive;
@@ -1249,6 +1250,18 @@ int apply_script_env(struct oc_vpn_option *envs);
 void free_split_routes(struct oc_ip_info *ip_info);
 int install_vpn_opts(struct openconnect_info *vpninfo, struct oc_vpn_option *opt,
 		     struct oc_ip_info *ip_info);
+
+#define SCRIPT_CAPTURE_OUTPUT	(1<<0)	/* capture stdout into buf */
+#define SCRIPT_DROP_PRIVS	(1<<1)	/* drop to uid_csd before exec */
+#define SCRIPT_REDIR_STDOUT	(1<<3)	/* dup2(2,1) -- redirect stdout to stderr */
+#define SCRIPT_CSD_ENV		(1<<4)	/* use csd_env instead of script_env */
+
+const char *script_engine(struct oc_vpn_option *engines, const char *path);
+int build_script_argv(const char *engine, const char *path,
+		      const char **extra_args, const char **argv, int maxargs,
+		      char *engbuf);
+int run_script(struct openconnect_info *vpninfo, const char **argv,
+	       unsigned int flags, struct oc_text_buf *output);
 
 /* vhost.h */
 int setup_vhost(struct openconnect_info *vpninfo, int tun_fd);

@@ -69,7 +69,8 @@ EXTRA_DIST = certs/ca.pem certs/ca-key.pem certs/user-cert.pem $(USER_KEYS) $(US
 	softhsm2.conf.in softhsm ns.sh configs/test-dtls-psk.config \
 	scripts/vpnc-script scripts/vpnc-script-detect-disconnect \
 	suppressions.lsan fake-fortinet-server.py fake-f5-server.py fake-juniper-server.py \
-	fake-juniper-sso-server.py fake-tncc.py fake-gp-server.py fake-cisco-server.py
+	fake-juniper-sso-server.py fake-tncc.py fake-gp-server.py fake-cisco-server.py \
+	fake-hip-wrapper.py print-args.c script-engine-test.c run-script-test.c
 
 dist_check_SCRIPTS = autocompletion symbols
 TESTS = autocompletion symbols
@@ -87,7 +88,7 @@ endif
 dist_check_SCRIPTS += auth-username-pass auth-certificate auth-nonascii cert-fingerprint \
 	id-test obsolete-server-crypto pfs auth-swtpm auth-hwtpm fortinet-auth-and-config \
 	f5-auth-and-config juniper-auth juniper-sso-auth gp-auth-and-config auth-pkcs11 \
-	auth-multicert
+	auth-multicert gp-hip-script
 
 if HAVE_CWRAP
 TESTS += auth-username-pass auth-certificate auth-nonascii cert-fingerprint id-test \
@@ -110,7 +111,7 @@ endif
 if HAVE_PYTHON36_FLASK
 TESTS += juniper-sso-auth auth-multicert
 if HAVE_PYTHON37_DATACLASSES
-TESTS += juniper-auth gp-auth-and-config f5-auth-and-config fortinet-auth-and-config
+TESTS += juniper-auth gp-auth-and-config gp-hip-script f5-auth-and-config fortinet-auth-and-config
 endif
 endif
 
@@ -136,6 +137,8 @@ endif # OPENCONNECT_OPENSSL
 endif # TEST_PKCS11
 endif # HAVE_CWRAP
 
+AM_CPPFLAGS = -I$(top_builddir) -I$(top_srcdir)/json $(JSON_CFLAGS) $(LIBPROXY_CFLAGS) $(LIBXML2_CFLAGS)
+
 TESTS_ENVIRONMENT = srcdir="$(srcdir)" \
 	top_srcdir="$(top_srcdir)" \
 	top_builddir="$(top_builddir)" \
@@ -147,9 +150,21 @@ TESTS_ENVIRONMENT = srcdir="$(srcdir)" \
 	pkcs11_keys="$(PKCS11_KEYS)" \
 	pkcs11_tokens="$(PKCS11_TOKENS)" \
 	EXEEXT=$(EXEEXT) \
+	PRINT_ARGS="$(abs_builddir)/print-args$(EXEEXT)" \
 	LSAN_OPTIONS=suppressions=$(srcdir)/suppressions.lsan
 
-C_TESTS = lzstest seqtest buftest
+C_TESTS = lzstest seqtest buftest script-engine-test print-args
+
+script_engine_test_SOURCES = script-engine-test.c
+
+print_args_SOURCES = print-args.c
+
+if !OPENCONNECT_WIN32
+C_TESTS += run-script-test
+
+run_script_test_SOURCES = run-script-test.c
+run_script_test_LDADD = $(SSL_LIBS)
+endif
 
 DISTCLEANFILES =
 

@@ -817,6 +817,7 @@ void openconnect_vpninfo_free(struct openconnect_info *vpninfo)
 	free(vpninfo->ip_info.gateway_addr);
 	free_optlist(vpninfo->csd_env);
 	free_optlist(vpninfo->script_env);
+	free_optlist(vpninfo->script_engines);
 	free_optlist(vpninfo->cookies);
 	free_optlist(vpninfo->cstp_options);
 	free_optlist(vpninfo->dtls_options);

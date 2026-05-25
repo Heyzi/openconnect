@@ -322,17 +322,67 @@ not set by default because it may leak information about the payload
 .TP
 .B \-U,\-\-setuid=USER
 Drop privileges after connecting, to become user
-.I USER
+.IR USER .
+Not supported on Windows.
 .TAG opt-csd-user
 .TP
 .B \-\-csd\-user=USER
 Drop privileges during execution of trojan binary or script (CSD, TNCC, or HIP).
+Not supported on Windows.
 .TAG opt-csd-wrapper
 .TP
 .B \-\-csd\-wrapper=SCRIPT
 Run
 .I SCRIPT
 instead of the trojan binary or script.
+The interpreter used to run
+.I SCRIPT
+is determined by
+.B \-\-script\-engine
+(see below), falling back to built-in defaults based on file extension.
+.TAG opt-script-engine
+.TP
+.B \-\-script\-engine=EXT:PROG
+Use
+.I PROG
+to execute scripts with file extension
+.IR EXT
+(without leading dot, e.g.
+.BR py ,
+not
+.BR .py ).
+May be specified multiple times for different extensions.
+For example,
+.B \-\-script\-engine=py:python3
+causes
+.B \-\-script ,
+.B \-\-csd\-wrapper ,
+and
+.B \-\-script\-tun
+arguments ending in
+.B .py
+to be run via
+.BR python3 .
+Built-in defaults: on Windows,
+.B .js
+uses
+.BR "cscript.exe /e:JScript" ,
+.B .vbs
+uses
+.BR "cscript.exe /e:VBScript" ,
+.B .ps1
+uses
+.BR "powershell.exe -File" ,
+.B .py
+uses
+.BR python.exe ,
+and
+.B .exe
+is executed directly; on other platforms,
+.B .sh
+uses
+.BR /bin/sh ,
+and other files are executed directly (relying on the shebang line).
 .TAG opt-force-trojan
 .TP
 .B \-\-force\-trojan=INTERVAL
@@ -457,8 +507,10 @@ use \fB@DEFAULT_VPNCSCRIPT@\fR by default.
 
 On Windows, a relative directory for the default script will be handled as
 starting from the directory that the openconnect executable is running from,
-rather than the current directory. The script will be invoked with the
-command-based script host \fBcscript.exe\fR.
+rather than the current directory. By default the script will be invoked with
+\fBcscript.exe\fR; use \fB\-\-script\-engine\fR to override the interpreter.
+On other platforms, the script is executed directly and must have a shebang
+line, or a mapping must be provided via \fB\-\-script\-engine\fR.
 .TAG opt-script-tun
 .TP
 .B \-S,\-\-script\-tun

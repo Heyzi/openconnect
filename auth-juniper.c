@@ -237,7 +237,19 @@ static int tncc_preauth(struct openconnect_info *vpninfo)
 				goto out;
 		}
 
-		execl(vpninfo->csd_wrapper, vpninfo->csd_wrapper, vpninfo->hostname, NULL);
+		{
+			/* TNCC can't use run_script() -- needs stdin on the socketpair */
+			const char *engine = script_engine(vpninfo->script_engines, vpninfo->csd_wrapper);
+			if (engine) {
+				const char *eargv[34];
+				const char *extra[] = { vpninfo->hostname, NULL };
+				char engbuf[strlen(engine) + 1];
+				build_script_argv(engine, vpninfo->csd_wrapper, extra, eargv, 34, engbuf);
+				execvp(eargv[0], (char **)eargv);
+			} else {
+				execl(vpninfo->csd_wrapper, vpninfo->csd_wrapper, vpninfo->hostname, NULL);
+			}
+		}
 	out:
 		fprintf(stderr, _("Failed to exec TNCC script %s: %s\n"),
 			vpninfo->csd_wrapper, strerror(errno));

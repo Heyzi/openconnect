@@ -79,7 +79,7 @@ int buf_ensure_space(struct oc_text_buf *buf, int len)
 	new_buf_len = (buf->pos + len + BUF_CHUNK_SIZE - 1) & ~(BUF_CHUNK_SIZE - 1);
 
 	if (new_buf_len <= buf->buf_len)
-		return 0;
+		return buf->data ? 0 : -ENOMEM;
 
 	if (new_buf_len > OC_BUF_MAX) {
 		buf->error = -E2BIG;
