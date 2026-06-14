@@ -793,6 +793,7 @@ MinGW64/OpenSSL:
   - export WINEPATH=/usr/x86_64-w64-mingw32/sys-root/mingw/bin\;.
 # Wintun tests cannot be run under wine, wintun cannot create the interface on wine. 
 # Tap tests also: wine does not support windows drivers
+# HUH?!?
   - make VERBOSE=1 XFAIL_TESTS="list-taps.exe wintun-names.exe" -j4 check
   tags:
   - saas-linux-small-amd64
