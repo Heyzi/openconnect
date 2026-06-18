@@ -33,9 +33,12 @@ extern "C" {
 #endif
 
 #define OPENCONNECT_API_VERSION_MAJOR 5
-#define OPENCONNECT_API_VERSION_MINOR 9
+#define OPENCONNECT_API_VERSION_MINOR 10
 
 /*
+ * API version 5.10 (...):
+ *  - Add openconnect_set_id_option()
+ *
  * API version 5.9 (v9.12; 2023-05-20):
  *  - Add openconnect_set_sni()
  *
@@ -638,6 +641,8 @@ int openconnect_set_mobile_info(struct openconnect_info *vpninfo,
 				const char *mobile_platform_version,
 				const char *mobile_device_type,
 				const char *mobile_device_uniqueid);
+int openconnect_set_id_option(struct openconnect_info *vpninfo,
+			      const char *opt, const char *val);
 int openconnect_set_client_cert(struct openconnect_info *, const char *cert,
 				const char *sslkey);
 int openconnect_set_key_password(struct openconnect_info *vpninfo, const char *pass);

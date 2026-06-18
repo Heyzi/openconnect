@@ -102,6 +102,10 @@ DAY=$(date +'%d')
 MONTH=$(date +'%m')
 YEAR=$(date +'%Y')
 
+# This value may need to be extracted from the official HIP report, and set with --local-id=host-id=XXX,
+# if default/made-up values are not accepted.
+[[ -z "$HOST_ID" ]] && HOST_ID="deadbeef-dead-beef-dead-beefdeadbeef"
+
 cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <hip-report name="hip-report">

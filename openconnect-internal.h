@@ -449,11 +449,16 @@ struct openconnect_info {
 	struct oc_text_buf *ppp_tls_connect_req;
 	struct oc_text_buf *ppp_dtls_connect_req;
 
+	/* Values that may be required for host identification or CSD/Trojan to succeed: */
 	int tncc_fd; /* For Juniper TNCC */
-	char *platname;
-	char *mobile_platform_version;
-	char *mobile_device_type;
-	char *mobile_device_uniqueid;
+	char *localname;
+	char *platname; /* originally based on AnyConnect values: linux, linux-64, win, mac-intel, android, apple-ios */
+	xmlNode *opaque_srvdata;
+	char *useragent;
+	char *version_string;
+	struct oc_vpn_option *id_options;
+
+	/* Used to track CSD/Trojan execution state: */
 	char *csd_token;
 	char *csd_ticket;
 	char *csd_stuburl;
@@ -462,7 +467,6 @@ struct openconnect_info {
 	char *csd_preurl;
 
 	char *csd_scriptname;
-	xmlNode *opaque_srvdata;
 
 	char *profile_url;
 	char *profile_sha1;
@@ -485,7 +489,6 @@ struct openconnect_info {
 	int no_external_auth;
 	const char *external_browser;
 
-	char *localname;
 
 	char *hostname; /* This is the original hostname (or IP address)
 			 * we were asked to connect to */
@@ -788,8 +791,6 @@ struct openconnect_info {
 	int dtls_compr; /* Accepted for DTLS */
 
 	int is_dyndns; /* Attempt to redo DNS lookup on each CSTP reconnect */
-	char *useragent;
-	char *version_string;
 
 	const char *quit_reason;
 	const char *delay_tunnel_reason;        /* If non-null, provides a reason why protocol is not yet ready for tunnel setup */
