@@ -496,6 +496,8 @@ struct openconnect_info {
 				* sure we reconnect to the same server we
 				* authenticated to. */
 
+	unsigned ipv4only, ipv6only;
+
 	int port;
 	char *urlpath;
 

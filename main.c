@@ -246,6 +246,8 @@ static const struct option long_options[] = {
 #if defined(HAVE_POSIX_SPAWN) || defined(_WIN32)
 	OPTION("external-browser", 1, OPT_EXT_BROWSER),
 #endif
+	OPTION("ipv4only", 0, '4'),
+	OPTION("ipv6only", 0, '6'),
 	OPTION("no-external-auth", 0, OPT_NO_EXTERNAL_AUTH),
 	OPTION("pfs", 0, OPT_PFS),
 	OPTION("allow-insecure-crypto", 0, OPT_ALLOW_INSECURE_CRYPTO),
@@ -1064,6 +1066,8 @@ static void usage(void)
 #endif
 	printf("      --reconnect-timeout=SECONDS %s\n", _("Reconnection retry timeout (default is 300 seconds)"));
 	printf("      --resolve=HOST:IP           %s\n", _("Use IP when connecting to HOST"));
+	printf("  -4, --ipv4only                  %s\n", _("Use IPv4"));
+	printf("  -6, --ipv6only                  %s\n", _("Use IPv6"));
 	printf("      --sni=HOST                  %s\n", _("Always send HOST as TLS client SNI (domain fronting)"));
 	printf("      --passtos                   %s\n", _("Copy TOS / TCLASS field into DTLS and ESP packets"));
 	printf("      --dtls-local-port=PORT      %s\n", _("Set local port for DTLS and ESP datagrams"));
@@ -1215,9 +1219,9 @@ static int next_option(int argc, char **argv, char **config_arg)
 	if (!config_file) {
 		opt = getopt_long(argc, argv,
 #ifdef _WIN32
-				  "C:c:Dde:F:g:hi:k:m:P:p:Q:qs:u:Vvx:",
+				  "46C:c:Dde:F:g:hi:k:m:P:p:Q:qs:u:Vvx:",
 #else
-				  "bC:c:Dde:F:g:hi:k:lm:P:p:Q:qSs:U:u:Vvx:",
+				  "46bC:c:Dde:F:g:hi:k:lm:P:p:Q:qSs:U:u:Vvx:",
 #endif
 				  long_options, NULL);
 
@@ -1885,6 +1889,12 @@ int main(int argc, char *argv[])
 			break;
 
 		switch (opt) {
+		case '4':
+			vpninfo->ipv4only = 1;
+			break;
+		case '6':
+			vpninfo->ipv6only = 1;
+			break;
 #ifndef _WIN32
 		case 'b':
 			background = 1;
