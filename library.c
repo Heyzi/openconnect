@@ -1794,6 +1794,67 @@ void nuke_opt_values(struct oc_form_opt *opt)
 	}
 }
 
+
+/*
+ * CLI fallback for single-sign-on-v2 when no embedded webview is registered
+ * and the server didn't request external-browser mode. Spawns the
+ * --external-browser executable on the SAML URL and reads the resulting
+ * token from stdin.
+ */
+static int cli_sso_prompt(struct openconnect_info *vpninfo)
+{
+	FILE *prompt_stream = stderr;
+	char *line = NULL;
+	size_t cap = 0;
+	ssize_t got;
+
+	vpn_progress(vpninfo, PRG_INFO,
+		     _("SAML SSO login URL:\n  %s\n"),
+		     vpninfo->sso_login);
+
+	if (vpninfo->external_browser) {
+		pid_t pid = fork();
+		if (pid == 0) {
+			execl(vpninfo->external_browser,
+			      vpninfo->external_browser,
+			      vpninfo->sso_login, (char *)NULL);
+			_exit(127);
+		} else if (pid > 0) {
+			vpn_progress(vpninfo, PRG_INFO,
+				     _("Opened SAML login in %s. After authenticating,\n"
+				       "copy the value of the '%s' cookie from your browser's\n"
+				       "developer tools (Storage -> Cookies for the VPN host)\n"
+				       "and paste it below.\n"),
+				     vpninfo->external_browser,
+				     vpninfo->sso_token_cookie ? vpninfo->sso_token_cookie : "sso-token");
+		}
+	} else {
+		vpn_progress(vpninfo, PRG_INFO,
+			     _("Open the URL above in a browser, authenticate,\n"
+			       "then copy the value of the '%s' cookie and paste it below.\n"),
+			     vpninfo->sso_token_cookie ? vpninfo->sso_token_cookie : "sso-token");
+	}
+
+	fprintf(prompt_stream, "%s value: ",
+		vpninfo->sso_token_cookie ? vpninfo->sso_token_cookie : "Token");
+	fflush(prompt_stream);
+
+	got = getline(&line, &cap, stdin);
+	if (got <= 0) {
+		free(line);
+		return -EINVAL;
+	}
+	/* trim trailing newline / whitespace */
+	while (got > 0 && (line[got-1] == '\n' || line[got-1] == '\r' || line[got-1] == ' '))
+		line[--got] = '\0';
+	if (got == 0) {
+		free(line);
+		return -EINVAL;
+	}
+	vpninfo->sso_cookie_value = line;
+	return 0;
+}
+
 int process_auth_form(struct openconnect_info *vpninfo, struct oc_auth_form *form)
 {
 	int ret, do_sso = 0;
@@ -1875,6 +1936,9 @@ retry:
 			ret = handle_external_browser(vpninfo);
 		} else if (vpninfo->open_webview) {
 			ret = vpninfo->open_webview(vpninfo, vpninfo->sso_login, vpninfo->cbdata);
+		} else if (vpninfo->external_browser || isatty(fileno(stdin))) {
+			/* CLI fallback: open URL externally and prompt for token */
+			ret = cli_sso_prompt(vpninfo);
 		} else {
 			vpn_progress(vpninfo, PRG_ERR,
 				     _("No SSO handler\n")); /* XX: print more debugging info */
