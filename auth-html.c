@@ -104,8 +104,8 @@ int parse_input_node(struct openconnect_info *vpninfo, struct oc_auth_form *form
 
 		xmlnode_get_prop(node, "name", &opt->name);
 		if (opt->name && submit_button && (!strcmp(opt->name, submit_button) ||
-						   !strcmp(opt->name, "sn-postauth-proceed") ||
-						   !strcmp(opt->name, "sn-preauth-proceed") ||
+						   !strcasecmp(opt->name, "sn-postauth-proceed") ||
+						   !strcasecmp(opt->name, "sn-preauth-proceed") ||
 						   !strcmp(opt->name, "secidactionEnter"))) {
 			/* Use this as the 'Submit' action for the form, by
 			   implicitly adding it as a hidden option. */
@@ -115,8 +115,8 @@ int parse_input_node(struct openconnect_info *vpninfo, struct oc_auth_form *form
 			vpn_progress(vpninfo, PRG_DEBUG,
 				     _("Ignoring unknown form submit item '%s'\n"),
 				     opt->name);
-			ret = -EINVAL;
-			goto out;
+			ret = 0;
+			goto free_out;
 		}
 	} else if (!strcasecmp(type, "checkbox")) {
 		opt->type = OC_FORM_OPT_HIDDEN;
