@@ -101,6 +101,7 @@ struct openconnect_info *openconnect_vpninfo_new(const char *useragent,
 #else
 	vpninfo->external_browser = NULL;
 #endif
+	vpninfo->external_auth_cmd = NULL;
 	vpninfo->localname = NULL;
 	vpninfo->unique_hostname = NULL;
 	vpninfo->port = 443;
@@ -1794,6 +1795,98 @@ void nuke_opt_values(struct oc_form_opt *opt)
 	}
 }
 
+static void parse_external_auth_cmd_output(struct openconnect_info *vpninfo, const char* line)
+{
+	// Trim spaces
+	int len = strlen(line);
+	while (len > 0 && line[len-1] <= ' ')
+		len--;
+
+	vpn_progress(vpninfo, PRG_DEBUG, _("External auth command stdout: '%.*s'\n"), len, line);
+
+	if (len == 0)
+		return;
+
+	// Try to parse as expected output
+	const char hdr[] = "sso_cookie_value=";
+	size_t hdr_len = sizeof(hdr) - 1;
+	if (!strncmp(line, hdr, MIN(len, hdr_len))) {
+		vpninfo->sso_cookie_value = strndup(&line[hdr_len], len - hdr_len);
+	}
+}
+
+#if defined(_WIN32)
+static int run_external_auth_cmd(struct openconnect_info *vpninfo)
+{
+	vpn_progress(vpninfo, PRG_ERR, _("External auth command is not supported on Windows\n"));
+	return -EINVAL;
+}
+#else
+static int run_external_auth_cmd(struct openconnect_info *vpninfo)
+{
+	FILE *proc;
+	int ret = 0;
+
+	ret = setenv("OC_SSO_LOGIN_URL", vpninfo->sso_login, /* overwrite */ 1);
+	if (ret) {
+		goto err_setenv;
+	}
+
+	ret = setenv("OC_SSO_TOKEN_COOKIE", vpninfo->sso_token_cookie, /* overwrite */ 1);
+	if (ret) {
+		goto err_setenv;
+	}
+
+	ret = setenv("OC_SSO_ERROR_COOKIE", vpninfo->sso_error_cookie, /* overwrite */ 1);
+	if (ret) {
+		goto err_setenv;
+	}
+
+	vpn_progress(vpninfo, PRG_DEBUG, _("Running external auth command for URL: %s\n"),
+					 vpninfo->sso_login);
+
+	proc = popen(vpninfo->external_auth_cmd, "r");
+	if (!proc) {
+		ret = errno;
+		goto err_popen;
+	}
+
+	char line[4096];
+	while (fgets(line, sizeof(line), proc) != NULL) {
+		parse_external_auth_cmd_output(vpninfo, line);
+	}
+
+	ret = pclose(proc);
+	if (ret < 0) {
+		ret = errno;
+		goto err_pclose;
+	}
+
+	if (WEXITSTATUS(ret)) {
+		vpn_progress(vpninfo, PRG_ERR, _("External auth command failed: exit_code=%d\n"), WEXITSTATUS(ret));
+		ret = -ECHILD;
+		goto err_ecode;
+	}
+
+	if (!vpninfo->sso_cookie_value || !*vpninfo->sso_cookie_value) {
+		vpn_progress(vpninfo, PRG_ERR, _("External auth command exited without providing a cookie\n"));
+		ret = -ECHILD;
+		goto err_no_cookie;
+	}
+
+err_no_cookie:
+err_ecode:
+err_pclose:
+err_popen:
+	unsetenv("OC_SSO_ERROR_COOKIE");
+	unsetenv("OC_SSO_TOKEN_COOKIE");
+	unsetenv("OC_SSO_LOGIN_URL");
+
+err_setenv:
+	return ret;
+}
+#endif
+
 int process_auth_form(struct openconnect_info *vpninfo, struct oc_auth_form *form)
 {
 	int ret, do_sso = 0;
@@ -1871,7 +1964,9 @@ retry:
 		vpninfo->sso_username = NULL;
 
 		/* Handle the special Cisco external browser mode */
-		if (vpninfo->sso_browser_mode && !strcmp(vpninfo->sso_browser_mode, "external")) {
+		if (vpninfo->external_auth_cmd) {
+			ret = run_external_auth_cmd(vpninfo);
+		} else if (vpninfo->sso_browser_mode && !strcmp(vpninfo->sso_browser_mode, "external")) {
 			ret = handle_external_browser(vpninfo);
 		} else if (vpninfo->open_webview) {
 			ret = vpninfo->open_webview(vpninfo, vpninfo->sso_login, vpninfo->cbdata);

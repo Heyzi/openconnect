@@ -20,6 +20,7 @@ openconnect \- Multi-protocol VPN client, for Cisco AnyConnect VPNs and others
 .OP \-g,\-\-usergroup group
 .OP \-h,\-\-help
 .OP \-\-http\-auth methods
+.OP \-\-external\-auth-command command
 .OP \-\-external\-browser browser
 .OP \-i,\-\-interface ifname
 .OP \-l,\-\-syslog
@@ -292,6 +293,16 @@ authentication in that order, if each is enabled, regardless of the order
 specified in the
 .I METHODS
 string.
+.TAG opt-external-auth-cmd
+.TP
+.B \-\-external\-auth-cmd=COMMAND
+Run
+.I COMMAND
+to handle the authentication process with
+SSO gateways.
+Only
+.B --protocol=anyconnect
+is supported for now.
 .TAG opt-external-browser
 .TP
 .B \-\-external\-browser=BROWSER

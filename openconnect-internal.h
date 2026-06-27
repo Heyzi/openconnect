@@ -484,6 +484,7 @@ struct openconnect_info {
 	struct http_auth_state proxy_auth[MAX_AUTH_TYPES];
 	int no_external_auth;
 	const char *external_browser;
+	const char *external_auth_cmd;
 
 	char *localname;
 

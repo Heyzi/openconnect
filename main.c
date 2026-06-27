@@ -180,6 +180,7 @@ enum {
 	OPT_DTLS12_CIPHERS,
 	OPT_DUMP_HTTP,
 	OPT_EXT_BROWSER,
+	OPT_EXT_AUTH_CMD,
 	OPT_FORCE_DPD,
 	OPT_FORCE_TROJAN,
 	OPT_GNUTLS_DEBUG,
@@ -246,6 +247,7 @@ static const struct option long_options[] = {
 #if defined(HAVE_POSIX_SPAWN) || defined(_WIN32)
 	OPTION("external-browser", 1, OPT_EXT_BROWSER),
 #endif
+	OPTION("external-auth-cmd", 1, OPT_EXT_AUTH_CMD),
 	OPTION("no-external-auth", 0, OPT_NO_EXTERNAL_AUTH),
 	OPTION("pfs", 0, OPT_PFS),
 	OPTION("allow-insecure-crypto", 0, OPT_ALLOW_INSECURE_CRYPTO),
@@ -1037,6 +1039,7 @@ static void usage(void)
 	printf("  -e, --cert-expire-warning=DAYS  %s\n", _("Warn when certificate lifetime < DAYS"));
 	printf("  -g, --usergroup=GROUP           %s\n", _("Set path of initial request URL"));
 	printf("  -p, --key-password=PASS         %s\n", _("Set key passphrase or TPM SRK PIN"));
+	printf("      --external-auth-cmd=CMD     %s\n", _("Command to run to perform authentication. Details in `man openconnect`."));
 	printf("      --external-browser=BROWSER  %s\n", _("Set external browser executable"));
 	printf("      --key-password-from-fsid    %s\n", _("Key passphrase is fsid of file system"));
 	printf("      --token-mode=MODE           %s\n", _("Software token type: rsa, totp, hotp or oidc"));
@@ -2148,6 +2151,9 @@ int main(int argc, char *argv[])
 			break;
 		case OPT_EXT_BROWSER:
 			vpninfo->external_browser = dup_config_arg();
+			break;
+		case OPT_EXT_AUTH_CMD:
+			vpninfo->external_auth_cmd = dup_config_arg();
 			break;
 		case OPT_NO_EXTERNAL_AUTH:
 			/* XX: Is this a workaround for a server bug, or a "normal" authentication option? */

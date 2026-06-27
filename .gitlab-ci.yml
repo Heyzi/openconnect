@@ -96,6 +96,7 @@ Changelog:
 
 static-analyzer/GnuTLS/Fedora:
   stage: static-analysis
+  needs: [] # run immediately
   image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$FEDORA_BUILD
   script:
   - ./autogen.sh
@@ -114,6 +115,7 @@ static-analyzer/GnuTLS/Fedora:
 
 static-analyzer/OpenSSL/Fedora:
   stage: static-analysis
+  needs: [] # run immediately
   image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$FEDORA_BUILD
   script:
   - ./autogen.sh
@@ -136,13 +138,14 @@ static-analyzer/OpenSSL/Fedora:
 
 Fedora/GnuTLS:
   stage: test-first
+  needs: [] # run immediately
   script:
   - ./autogen.sh
   - ./configure --with-java --disable-dsa-tests --without-gnutls-version-check --enable-ppp-tests CFLAGS=-g
   - make tmp-distdir
   - mkdir build
   - cd build
-  - TMPDISTDIR=../openconnect-$(git describe --tags | sed s/^v//)
+  - TMPDISTDIR=../openconnect-$(git describe --tags 2>/dev/null | sed s/^v// || true)
   - ${TMPDISTDIR}/configure --with-java --disable-dsa-tests --without-gnutls-version-check --enable-ppp-tests CFLAGS=-g
   - make -j4
 # For reasons that are unclear, but probably also unimportant, IPv6 is disabled by default on this CI
@@ -166,6 +169,7 @@ Fedora/GnuTLS:
 
 Fedora/OpenSSL:
   stage: test-first
+  needs: [] # run immediately
   image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$FEDORA_BUILD
   script:
 # Re-enable DSA since we test it
@@ -175,7 +179,7 @@ Fedora/OpenSSL:
   - make tmp-distdir
   - mkdir build
   - cd build
-  - TMPDISTDIR=../openconnect-$(git describe --tags | sed s/^v//)
+  - TMPDISTDIR=../openconnect-$(git describe --tags 2>/dev/null | sed s/^v// || true)
   - ${TMPDISTDIR}/configure --without-gnutls --with-openssl --without-openssl-version-check --disable-dsa-tests --enable-ppp-tests CFLAGS=-g
   - make -j4
 # For reasons that are unclear, but probably also unimportant, IPv6 is disabled by default on this CI
@@ -435,7 +439,7 @@ Fedora/GnuTLS/ibmtss:
   - make tmp-distdir
   - mkdir build
   - cd build
-  - TMPDISTDIR=../openconnect-$(git describe --tags | sed s/^v//)
+  - TMPDISTDIR=../openconnect-$(git describe --tags 2>/dev/null | sed s/^v// || true)
   - ${TMPDISTDIR}/configure --with-java --disable-dsa-tests --without-gnutls-version-check --enable-ppp-tests --with-gnutls-tss2=ibmtss CFLAGS=-g
   - make -j4
 # For reasons that are unclear, but probably also unimportant, IPv6 is disabled by default on this CI
@@ -465,7 +469,7 @@ Fedora/GnuTLS/clang:
   - make tmp-distdir
   - mkdir build
   - cd build
-  - TMPDISTDIR=../openconnect-$(git describe --tags | sed s/^v//)
+  - TMPDISTDIR=../openconnect-$(git describe --tags 2>/dev/null | sed s/^v// || true)
   - ${TMPDISTDIR}/configure --with-java --disable-dsa-tests --without-gnutls-version-check CC=clang --enable-ppp-tests CFLAGS=-g
   - make -j4
 # For reasons that are unclear, but probably also unimportant, IPv6 is disabled by default on this CI
@@ -498,7 +502,7 @@ Fedora/OpenSSL/clang:
   - make tmp-distdir
   - mkdir build
   - cd build
-  - TMPDISTDIR=../openconnect-$(git describe --tags | sed s/^v//)
+  - TMPDISTDIR=../openconnect-$(git describe --tags 2>/dev/null | sed s/^v// || true)
   - ${TMPDISTDIR}/configure CC=clang --without-gnutls --with-openssl --without-openssl-version-check --disable-dsa-tests --enable-ppp-tests CFLAGS=-g
   - make -j4
 # For reasons that are unclear, but probably also unimportant, IPv6 is disabled by default on this CI
