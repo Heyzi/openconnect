@@ -1798,8 +1798,9 @@ void nuke_opt_values(struct oc_form_opt *opt)
 }
 
 #ifdef HAVE_POSIX_SPAWN
-/* Spawn the SSO wrapper with the login URL, and read COOKIE= (and optional
- * USER=) back from its stdout. */
+/* Spawn the SSO wrapper with the login URL and read its result from stdout as
+ * "key=value" lines in config-file syntax: passwd= (the SSO token), and
+ * optionally user= and usergroup=. */
 static int handle_sso_wrapper(struct openconnect_info *vpninfo)
 {
 	posix_spawn_file_actions_t file_actions;
@@ -1844,18 +1845,47 @@ static int handle_sso_wrapper(struct openconnect_info *vpninfo)
 		return -err;
 	}
 
-	while ((ret = cancellable_gets(vpninfo, sockfd[1], line, sizeof(line))) > 0) {
-		if (!strncmp(line, "COOKIE=", 7)) {
-			free(vpninfo->sso_cookie_value);
-			vpninfo->sso_cookie_value = strdup(line + 7);
-			if (!vpninfo->sso_cookie_value) {
-				ret = -ENOMEM;
-				break;
-			}
-		} else if (!strncmp(line, "USER=", 5)) {
-			free(vpninfo->sso_username);
-			vpninfo->sso_username = strdup(line + 5);
-			if (!vpninfo->sso_username) {
+	/* cancellable_gets() returns 0 on an empty line and -ECONNRESET (not 0)
+	 * when the wrapper closes, so >= 0 keeps blank lines from ending the read. */
+	while ((ret = cancellable_gets(vpninfo, sockfd[1], line, sizeof(line))) >= 0) {
+		char **dst = NULL, *key = line, *val;
+		int ate_equals;
+
+		/* Skip leading whitespace, blank lines and comments */
+		while (*key == ' ' || *key == '\t')
+			key++;
+		if (!*key || *key == '#')
+			continue;
+
+		/* Split key from value on the first separator, tolerating
+		 * "key=value", "key value" and "key = value" alike */
+		for (val = key; *val && *val != '=' && *val != ' ' && *val != '\t'; val++)
+			;
+		ate_equals = (*val == '=');
+		if (*val)
+			*val++ = '\0';
+		while (*val == ' ' || *val == '\t' ||
+		       (*val == '=' && !ate_equals && ++ate_equals))
+			val++;
+
+		if (!strcmp(key, "passwd"))
+			dst = &vpninfo->sso_cookie_value;
+		else if (!strcmp(key, "user"))
+			dst = &vpninfo->sso_username;
+		else if (!strcmp(key, "usergroup")) {
+			/* As with --usergroup, only the field name after any
+			 * "gateway:"/"portal:" prefix names the form field. */
+			char *colon = strrchr(val, ':');
+			if (colon)
+				val = colon + 1;
+			dst = &vpninfo->sso_token_cookie;
+		}
+		/* Other keys are ignored, so a newer openconnect can accept more */
+
+		if (dst) {
+			free(*dst);
+			*dst = strdup(val);
+			if (!*dst) {
 				ret = -ENOMEM;
 				break;
 			}

@@ -715,6 +715,28 @@ static int gpst_login(struct openconnect_info *vpninfo, int portal, struct login
 		if (result)
 			goto out;
 
+		/* The SSO step (wrapper or webview) may report the destination field
+		 * name (GP names it prelogin-cookie or portal-userauthcookie); use it
+		 * unless --usergroup already pinned one. */
+		if (vpninfo->sso_token_cookie) {
+			if (!ctx->alt_secret) {
+				struct oc_form_opt *opt;
+				for (opt = ctx->form->opts; opt; opt = opt->next) {
+					if (opt->type == OC_FORM_OPT_SSO_TOKEN) {
+						char *name = strdup(vpninfo->sso_token_cookie);
+						if (!name) {
+							result = -ENOMEM;
+							goto out;
+						}
+						free(opt->name);
+						opt->name = name;
+					}
+				}
+			}
+			free(vpninfo->sso_token_cookie);
+			vpninfo->sso_token_cookie = NULL;
+		}
+
 		/* Coming back from SAML we might have been redirected */
 		if (vpninfo->redirect_url) {
 			result = handle_redirect(vpninfo);
