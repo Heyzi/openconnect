@@ -103,7 +103,7 @@ static int parse_prelogin_xml(struct openconnect_info *vpninfo, xmlNode *xml_nod
 			vpn_progress(vpninfo, PRG_DEBUG, _("SAML authentication required; using portal-userauthcookie to continue SAML.\n"));
 		else if (!vpninfo->open_webview && ctx->portal_prelogonuserauthcookie)
 			vpn_progress(vpninfo, PRG_DEBUG, _("SAML authentication required; using portal-prelogonuserauthcookie to continue SAML.\n"));
-		else if (!vpninfo->open_webview && ctx->alt_secret)
+		else if (!vpninfo->open_webview && !vpninfo->sso_wrapper && ctx->alt_secret)
 			vpn_progress(vpninfo, PRG_DEBUG, _("Destination form field %s was specified; assuming SAML %s authentication is complete.\n"),
 			             ctx->alt_secret, saml_method);
 		else {
@@ -147,8 +147,8 @@ static int parse_prelogin_xml(struct openconnect_info *vpninfo, xmlNode *xml_nod
 					_("SAML %s authentication is required via %s\n"),
 					saml_method, saml_path);
 
-			/* Legacy flow (when not called by n-m-oc) */
-			if (!vpninfo->open_webview) {
+			/* Legacy flow (when not called by n-m-oc, and no SSO wrapper) */
+			if (!vpninfo->open_webview && !vpninfo->sso_wrapper) {
 				vpn_progress(vpninfo,
 					PRG_ERR, _("When SAML authentication is complete, specify destination form field by appending field_name to login URL.\n"));
 				goto out;
