@@ -2026,6 +2026,11 @@ int openconnect_open_https(struct openconnect_info *vpninfo)
 	while ((err = SSL_connect(https_ssl)) <= 0) {
 		fd_set wr_set, rd_set;
 		int maxfd = ssl_sock;
+		struct timeval timeout;
+
+		/* Aligned with DEFAULT_HANDSHAKE_TIMEOUT_MS from GnuTLS 3.8.10 */
+		timeout.tv_sec = 40;
+		timeout.tv_usec = 0;
 
 		FD_ZERO(&wr_set);
 		FD_ZERO(&rd_set);
@@ -2044,8 +2049,14 @@ int openconnect_open_https(struct openconnect_info *vpninfo)
 		}
 
 		cmd_fd_set(vpninfo, &rd_set, &maxfd);
-		select(maxfd + 1, &rd_set, &wr_set, NULL, NULL);
-		if (is_cancel_pending(vpninfo, &rd_set)) {
+		err = select(maxfd + 1, &rd_set, &wr_set, NULL, &timeout);
+		if (err == 0) {
+			vpn_progress(vpninfo, PRG_ERR, _("SSL connection failure: %s\n"),
+							 strerror(ETIMEDOUT));
+			SSL_free(https_ssl);
+			closesocket(ssl_sock);
+			return -EIO;
+		} else if (is_cancel_pending(vpninfo, &rd_set)) {
 			vpn_progress(vpninfo, PRG_ERR, _("SSL connection cancelled\n"));
 			SSL_free(https_ssl);
 			closesocket(ssl_sock);
