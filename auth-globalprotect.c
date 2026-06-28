@@ -674,6 +674,7 @@ out:
 static int gpst_login(struct openconnect_info *vpninfo, int portal, struct login_context *ctx)
 {
 	int result, blind_retry = 0;
+	char *last_sso_token = NULL;
 	struct oc_text_buf *request_body = buf_alloc();
 	char *xml_buf = NULL, *orig_path;
 
@@ -770,6 +771,23 @@ static int gpst_login(struct openconnect_info *vpninfo, int portal, struct login
 			/* Invalid username/password; reuse same form, but blank,
 			 * unless we just did a blind retry.
 			 */
+			struct oc_form_opt *opt;
+			char *tok = NULL;
+			for (opt = ctx->form->opts; opt; opt = opt->next)
+				if (opt->type == OC_FORM_OPT_SSO_TOKEN)
+					tok = opt->_value;
+			/* If an SSO handler keeps handing back the same rejected
+			 * token (e.g. a stale stored cookie), we'd loop forever.
+			 * Stop. Non-SSO forms have no SSO_TOKEN field (tok==NULL)
+			 * and keep retrying unboundedly as before.
+			 */
+			if (tok && last_sso_token && !strcmp(tok, last_sso_token)) {
+				vpn_progress(vpninfo, PRG_ERR,
+					     _("Stored SSO cookie keeps being rejected; not retrying.\n"));
+				goto out;
+			}
+			free(last_sso_token);
+			last_sso_token = tok ? strdup(tok) : NULL;
 			nuke_opt_values(ctx->form->opts);
 			if (!blind_retry)
 				goto got_form;
@@ -799,6 +817,7 @@ static int gpst_login(struct openconnect_info *vpninfo, int portal, struct login
 	}
 
 out:
+	free(last_sso_token);
 	buf_free(request_body);
 	free(xml_buf);
 	return result;
