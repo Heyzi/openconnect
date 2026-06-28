@@ -1883,6 +1883,13 @@ retry:
 		if (!ret) {
 			for (opt = form->opts; opt; opt = opt->next) {
 				if (opt->type == OC_FORM_OPT_SSO_TOKEN) {
+					/* An empty token is a failure, not a blank submission. */
+					if (!vpninfo->sso_cookie_value || !vpninfo->sso_cookie_value[0]) {
+						vpn_progress(vpninfo, PRG_ERR,
+							     _("SSO authentication succeeded but returned an empty token\n"));
+						ret = -EINVAL;
+						break;
+					}
 					free(opt->_value);
 					opt->_value = vpninfo->sso_cookie_value;
 					vpninfo->sso_cookie_value = NULL;
