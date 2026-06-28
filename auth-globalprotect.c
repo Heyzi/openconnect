@@ -147,11 +147,19 @@ static int parse_prelogin_xml(struct openconnect_info *vpninfo, xmlNode *xml_nod
 					_("SAML %s authentication is required via %s\n"),
 					saml_method, saml_path);
 
-			/* Legacy flow (when not called by n-m-oc, and no SSO wrapper) */
+			/* No webview and no explicit --sso-wrapper (the alt_secret manual
+			 * flow above did not apply). Fall back to the platform's installed
+			 * SSO helper if we can spawn one, else explain manual completion. */
 			if (!vpninfo->open_webview && !vpninfo->sso_wrapper) {
+#if defined(DEFAULT_SSO_WRAPPER) && defined(HAVE_POSIX_SPAWN)
+				vpninfo->sso_wrapper = strdup(DEFAULT_SSO_WRAPPER);
+				if (!vpninfo->sso_wrapper)
+					goto nomem;
+#else
 				vpn_progress(vpninfo,
 					PRG_ERR, _("When SAML authentication is complete, specify destination form field by appending field_name to login URL.\n"));
 				goto out;
+#endif
 			}
 		}
 	}

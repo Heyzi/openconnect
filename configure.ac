@@ -113,6 +113,7 @@ case $host_os in
     AC_CHECK_DECL(getenv_s, [AC_DEFINE(HAVE_GETENV_S_DECL, 1, [MinGW declares getenv_s])], [], [#include <sec_api/stdlib_s.h>])
     ;;
  *darwin*)
+    have_darwin=yes
     system_pcsc_libs="-Wl,-framework -Wl,PCSC"
     system_pcsc_cflags=
     default_browser=open
@@ -125,6 +126,7 @@ case $host_os in
     ;;
 esac
 AM_CONDITIONAL(OPENCONNECT_WIN32,  [ test "$have_win" = "yes" ])
+AM_CONDITIONAL(OPENCONNECT_DARWIN, [ test "$have_darwin" = "yes" ])
 
 if test "$have_win" = "yes"; then
    #required for vpnc-script-win.js and wintun

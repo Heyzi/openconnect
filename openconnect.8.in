@@ -308,7 +308,8 @@ authentication method.
 Run
 .I SCRIPT
 to handle SAML/SSO authentication. OpenConnect spawns it with the login URL
-as its argument and reads the result from its stdout as
+and the gateway hostname as its two arguments and reads the result from its
+stdout as
 .B key=value
 lines, using config-file syntax:
 .B passwd=
@@ -320,7 +321,13 @@ supply the username and (for GlobalProtect) the destination form field, so
 that the field name need not be appended to the login URL by hand. Blank lines
 and lines beginning with
 .B #
-are ignored.
+are ignored. For GlobalProtect, when
+.B \-\-sso\-wrapper
+is omitted openconnect falls back to the platform's installed helper (the
+WKWebView helper on macOS, the gp\-saml\-gui adapter on other Unix); supply
+.I SCRIPT
+to override it, or append the destination form field to the login URL to
+complete SAML by hand instead.
 .TAG opt-interface
 .TP
 .B \-i,\-\-interface=IFNAME

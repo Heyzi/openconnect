@@ -2159,7 +2159,7 @@ int main(int argc, char *argv[])
 			break;
 #ifdef HAVE_POSIX_SPAWN
 		case OPT_SSO_WRAPPER:
-			vpninfo->sso_wrapper = keep_config_arg();
+			vpninfo->sso_wrapper = dup_config_arg();
 			break;
 #endif
 		case OPT_NO_EXTERNAL_AUTH:

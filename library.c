@@ -836,6 +836,7 @@ void openconnect_vpninfo_free(struct openconnect_info *vpninfo)
 	free(vpninfo->proxy_user);
 	free_pass(&vpninfo->proxy_pass);
 	free(vpninfo->vpnc_script);
+	free(vpninfo->sso_wrapper);
 	free(vpninfo->cafile);
 	free(vpninfo->ifname);
 	free(vpninfo->dtls_cipher);
@@ -1798,13 +1799,14 @@ void nuke_opt_values(struct oc_form_opt *opt)
 }
 
 #ifdef HAVE_POSIX_SPAWN
-/* Spawn the SSO wrapper with the login URL and read its result from stdout as
- * "key=value" lines in config-file syntax: passwd= (the SSO token), and
- * optionally user= and usergroup=. */
+/* Spawn the SSO wrapper with the login URL and gateway, and read its result
+ * from stdout as "key=value" lines in config-file syntax: passwd= (the SSO
+ * token), and optionally user= and usergroup=. */
 static int handle_sso_wrapper(struct openconnect_info *vpninfo)
 {
 	posix_spawn_file_actions_t file_actions;
-	char *wrapper_argv[3] = { vpninfo->sso_wrapper, vpninfo->sso_login, NULL };
+	char *wrapper_argv[4] = { vpninfo->sso_wrapper, vpninfo->sso_login,
+				  vpninfo->hostname, NULL };
 	char line[4096];
 	int sockfd[2];
 	int err, ret = 0;
