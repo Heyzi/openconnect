@@ -26,6 +26,17 @@ noinst_PROGRAMS :=
 AM_CFLAGS = @WFLAGS@
 AM_CPPFLAGS = -DLOCALEDIR="\"$(localedir)\""
 
+# Default --sso-wrapper: the platform's installed SSO helper, overridable on the
+# command line. Build-time path (pkglibexecdir), so it's here not in configure.ac.
+# Windows has no posix_spawn (hence no --sso-wrapper), so no default there.
+if OPENCONNECT_DARWIN
+AM_CPPFLAGS += -DDEFAULT_SSO_WRAPPER="\"$(pkglibexecdir)/sso-webkit.swift\""
+else
+if !OPENCONNECT_WIN32
+AM_CPPFLAGS += -DDEFAULT_SSO_WRAPPER="\"$(pkglibexecdir)/sso-gp-saml-gui.sh\""
+endif
+endif
+
 openconnect_SOURCES = xml.c main.c
 openconnect_CFLAGS = $(AM_CFLAGS) $(SSL_CFLAGS) $(DTLS_SSL_CFLAGS) \
 	$(LIBXML2_CFLAGS) $(JSON_CFLAGS) $(LIBPROXY_CFLAGS) \
@@ -203,6 +214,16 @@ DISTCLEANFILES = $(pkgconfig_DATA) version.c
 
 pkglibexec_SCRIPTS = trojans/csd-post.sh trojans/csd-wrapper.sh trojans/tncc-wrapper.py \
 	trojans/hipreport.sh trojans/hipreport-android.sh trojans/tncc-emulate.py
+# The SSO helpers are platform-specific: the WKWebView app for macOS, the
+# gp-saml-gui (GTK) adapter for other Unix. Windows has neither (no posix_spawn,
+# hence no --sso-wrapper). Both ship in the tarball regardless.
+if OPENCONNECT_DARWIN
+pkglibexec_SCRIPTS += trojans/sso-webkit.swift
+else
+if !OPENCONNECT_WIN32
+pkglibexec_SCRIPTS += trojans/sso-gp-saml-gui.sh
+endif
+endif
 
 bashcompletiondir = $(datadir)/bash-completion/completions
 bashcompletion_DATA = bash/openconnect

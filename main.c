@@ -221,6 +221,7 @@ enum {
 	OPT_MULTICERT_CERT,
 	OPT_MULTICERT_KEY,
 	OPT_MULTICERT_KEY_PASSWORD,
+	OPT_SSO_WRAPPER,
 };
 
 #ifdef __sun__
@@ -245,6 +246,9 @@ static const struct option long_options[] = {
 #endif
 #if defined(HAVE_POSIX_SPAWN) || defined(_WIN32)
 	OPTION("external-browser", 1, OPT_EXT_BROWSER),
+#endif
+#ifdef HAVE_POSIX_SPAWN
+	OPTION("sso-wrapper", 1, OPT_SSO_WRAPPER),
 #endif
 	OPTION("no-external-auth", 0, OPT_NO_EXTERNAL_AUTH),
 	OPTION("pfs", 0, OPT_PFS),
@@ -1038,6 +1042,9 @@ static void usage(void)
 	printf("  -g, --usergroup=GROUP           %s\n", _("Set path of initial request URL"));
 	printf("  -p, --key-password=PASS         %s\n", _("Set key passphrase or TPM SRK PIN"));
 	printf("      --external-browser=BROWSER  %s\n", _("Set external browser executable"));
+#ifdef HAVE_POSIX_SPAWN
+	printf("      --sso-wrapper=SCRIPT        %s\n", _("Run SCRIPT to handle SSO authentication"));
+#endif
 	printf("      --key-password-from-fsid    %s\n", _("Key passphrase is fsid of file system"));
 	printf("      --token-mode=MODE           %s\n", _("Software token type: rsa, totp, hotp or oidc"));
 	printf("      --token-secret=STRING       %s\n", _("Software token secret or oidc token"));
@@ -1493,6 +1500,7 @@ static int autocomplete(int argc, char **argv)
 			case 's': /* --script */
 			case OPT_CSD_WRAPPER: /* --csd-wrapper */
 			case OPT_EXT_BROWSER: /* --external-browser */
+			case OPT_SSO_WRAPPER: /* --sso-wrapper */
 				autocomplete_special("EXECUTABLE", comp_opt, prefixlen, NULL);
 				break;
 
@@ -2149,6 +2157,11 @@ int main(int argc, char *argv[])
 		case OPT_EXT_BROWSER:
 			vpninfo->external_browser = dup_config_arg();
 			break;
+#ifdef HAVE_POSIX_SPAWN
+		case OPT_SSO_WRAPPER:
+			vpninfo->sso_wrapper = dup_config_arg();
+			break;
+#endif
 		case OPT_NO_EXTERNAL_AUTH:
 			/* XX: Is this a workaround for a server bug, or a "normal" authentication option? */
 			vpninfo->no_external_auth = 1;

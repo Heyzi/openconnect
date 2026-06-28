@@ -103,7 +103,7 @@ static int parse_prelogin_xml(struct openconnect_info *vpninfo, xmlNode *xml_nod
 			vpn_progress(vpninfo, PRG_DEBUG, _("SAML authentication required; using portal-userauthcookie to continue SAML.\n"));
 		else if (!vpninfo->open_webview && ctx->portal_prelogonuserauthcookie)
 			vpn_progress(vpninfo, PRG_DEBUG, _("SAML authentication required; using portal-prelogonuserauthcookie to continue SAML.\n"));
-		else if (!vpninfo->open_webview && ctx->alt_secret)
+		else if (!vpninfo->open_webview && !vpninfo->sso_wrapper && ctx->alt_secret)
 			vpn_progress(vpninfo, PRG_DEBUG, _("Destination form field %s was specified; assuming SAML %s authentication is complete.\n"),
 			             ctx->alt_secret, saml_method);
 		else {
@@ -147,11 +147,19 @@ static int parse_prelogin_xml(struct openconnect_info *vpninfo, xmlNode *xml_nod
 					_("SAML %s authentication is required via %s\n"),
 					saml_method, saml_path);
 
-			/* Legacy flow (when not called by n-m-oc) */
-			if (!vpninfo->open_webview) {
+			/* No webview and no explicit --sso-wrapper (the alt_secret manual
+			 * flow above did not apply). Fall back to the platform's installed
+			 * SSO helper if we can spawn one, else explain manual completion. */
+			if (!vpninfo->open_webview && !vpninfo->sso_wrapper) {
+#if defined(DEFAULT_SSO_WRAPPER) && defined(HAVE_POSIX_SPAWN)
+				vpninfo->sso_wrapper = strdup(DEFAULT_SSO_WRAPPER);
+				if (!vpninfo->sso_wrapper)
+					goto nomem;
+#else
 				vpn_progress(vpninfo,
 					PRG_ERR, _("When SAML authentication is complete, specify destination form field by appending field_name to login URL.\n"));
 				goto out;
+#endif
 			}
 		}
 	}
@@ -714,6 +722,28 @@ static int gpst_login(struct openconnect_info *vpninfo, int portal, struct login
 		result = process_auth_form(vpninfo, ctx->form);
 		if (result)
 			goto out;
+
+		/* The SSO step (wrapper or webview) may report the destination field
+		 * name (GP names it prelogin-cookie or portal-userauthcookie); use it
+		 * unless --usergroup already pinned one. */
+		if (vpninfo->sso_token_cookie) {
+			if (!ctx->alt_secret) {
+				struct oc_form_opt *opt;
+				for (opt = ctx->form->opts; opt; opt = opt->next) {
+					if (opt->type == OC_FORM_OPT_SSO_TOKEN) {
+						char *name = strdup(vpninfo->sso_token_cookie);
+						if (!name) {
+							result = -ENOMEM;
+							goto out;
+						}
+						free(opt->name);
+						opt->name = name;
+					}
+				}
+			}
+			free(vpninfo->sso_token_cookie);
+			vpninfo->sso_token_cookie = NULL;
+		}
 
 		/* Coming back from SAML we might have been redirected */
 		if (vpninfo->redirect_url) {

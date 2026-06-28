@@ -42,6 +42,9 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <ctype.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 struct openconnect_info *openconnect_vpninfo_new(const char *useragent,
 						 openconnect_validate_peer_cert_vfn validate_peer_cert,
@@ -833,6 +836,7 @@ void openconnect_vpninfo_free(struct openconnect_info *vpninfo)
 	free(vpninfo->proxy_user);
 	free_pass(&vpninfo->proxy_pass);
 	free(vpninfo->vpnc_script);
+	free(vpninfo->sso_wrapper);
 	free(vpninfo->cafile);
 	free(vpninfo->ifname);
 	free(vpninfo->dtls_cipher);
@@ -1794,6 +1798,121 @@ void nuke_opt_values(struct oc_form_opt *opt)
 	}
 }
 
+#ifdef HAVE_POSIX_SPAWN
+/* Spawn the SSO wrapper with the login URL and gateway, and read its result
+ * from stdout as "key=value" lines in config-file syntax: passwd= (the SSO
+ * token), and optionally user= and usergroup=. */
+static int handle_sso_wrapper(struct openconnect_info *vpninfo)
+{
+	posix_spawn_file_actions_t file_actions;
+	char *wrapper_argv[4] = { vpninfo->sso_wrapper, vpninfo->sso_login,
+				  vpninfo->hostname, NULL };
+	char line[4096];
+	int sockfd[2];
+	int err, ret = 0;
+	pid_t pid = 0;
+
+	vpn_progress(vpninfo, PRG_TRACE, _("Spawning SSO wrapper '%s'\n"),
+		     vpninfo->sso_wrapper);
+
+#ifdef SOCK_CLOEXEC
+	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockfd))
+#endif
+	{
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockfd))
+			return -errno;
+		set_fd_cloexec(sockfd[0]);
+		set_fd_cloexec(sockfd[1]);
+	}
+
+	err = posix_spawn_file_actions_init(&file_actions);
+	if (err) {
+		close(sockfd[0]);
+		close(sockfd[1]);
+		return -err;
+	}
+	posix_spawn_file_actions_adddup2(&file_actions, sockfd[0], STDOUT_FILENO);
+	posix_spawn_file_actions_addclose(&file_actions, sockfd[0]);
+	posix_spawn_file_actions_addclose(&file_actions, sockfd[1]);
+
+	err = posix_spawn(&pid, vpninfo->sso_wrapper, &file_actions, NULL,
+			  wrapper_argv, environ);
+	posix_spawn_file_actions_destroy(&file_actions);
+	close(sockfd[0]);
+	if (err) {
+		close(sockfd[1]);
+		vpn_progress(vpninfo, PRG_ERR,
+			     _("Failed to spawn SSO wrapper '%s': %s\n"),
+			     vpninfo->sso_wrapper, strerror(err));
+		return -err;
+	}
+
+	/* cancellable_gets() returns 0 on an empty line and -ECONNRESET (not 0)
+	 * when the wrapper closes, so >= 0 keeps blank lines from ending the read. */
+	while ((ret = cancellable_gets(vpninfo, sockfd[1], line, sizeof(line))) >= 0) {
+		char **dst = NULL, *key = line, *val;
+		int ate_equals;
+
+		/* Skip leading whitespace, blank lines and comments */
+		while (*key == ' ' || *key == '\t')
+			key++;
+		if (!*key || *key == '#')
+			continue;
+
+		/* Split key from value on the first separator, tolerating
+		 * "key=value", "key value" and "key = value" alike */
+		for (val = key; *val && *val != '=' && *val != ' ' && *val != '\t'; val++)
+			;
+		ate_equals = (*val == '=');
+		if (*val)
+			*val++ = '\0';
+		while (*val == ' ' || *val == '\t' ||
+		       (*val == '=' && !ate_equals && ++ate_equals))
+			val++;
+
+		if (!strcmp(key, "passwd"))
+			dst = &vpninfo->sso_cookie_value;
+		else if (!strcmp(key, "user"))
+			dst = &vpninfo->sso_username;
+		else if (!strcmp(key, "usergroup")) {
+			/* As with --usergroup, only the field name after any
+			 * "gateway:"/"portal:" prefix names the form field. */
+			char *colon = strrchr(val, ':');
+			if (colon)
+				val = colon + 1;
+			dst = &vpninfo->sso_token_cookie;
+		}
+		/* Other keys are ignored, so a newer openconnect can accept more */
+
+		if (dst) {
+			free(*dst);
+			*dst = strdup(val);
+			if (!*dst) {
+				ret = -ENOMEM;
+				break;
+			}
+		}
+	}
+	close(sockfd[1]);
+	waitpid(pid, NULL, 0);
+
+	/* Got the cookie — success. Exclude -ENOMEM so a failed strdup in the
+	 * read loop isn't mistaken for success. */
+	if (vpninfo->sso_cookie_value && ret != -ENOMEM)
+		return 0;
+
+	/* Propagate a genuine error, but not the -ECONNRESET we get when the
+	 * wrapper closes its end without a cookie. */
+	if (ret < 0 && ret != -ECONNRESET)
+		return ret;
+
+	vpn_progress(vpninfo, PRG_ERR,
+		     _("SSO wrapper '%s' did not return a cookie\n"),
+		     vpninfo->sso_wrapper);
+	return -EINVAL;
+}
+#endif /* HAVE_POSIX_SPAWN */
+
 int process_auth_form(struct openconnect_info *vpninfo, struct oc_auth_form *form)
 {
 	int ret, do_sso = 0;
@@ -1875,6 +1994,10 @@ retry:
 			ret = handle_external_browser(vpninfo);
 		} else if (vpninfo->open_webview) {
 			ret = vpninfo->open_webview(vpninfo, vpninfo->sso_login, vpninfo->cbdata);
+#ifdef HAVE_POSIX_SPAWN
+		} else if (vpninfo->sso_wrapper) {
+			ret = handle_sso_wrapper(vpninfo);
+#endif
 		} else {
 			vpn_progress(vpninfo, PRG_ERR,
 				     _("No SSO handler\n")); /* XX: print more debugging info */
