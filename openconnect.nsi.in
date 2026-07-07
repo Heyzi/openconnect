@@ -12,38 +12,59 @@
 # which will generate the output file 'openconnect-installer.exe' which is a Windows
 # installer containing your program.
 
-Name "OpenConnect"
+!define PRODUCT_NAME "OpenConnect"
+!define PRODUCT_URL "https://www.infradead.org/openconnect/"
+!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenConnect"
+
+!define ENVAR_SUCCESS 0
+!define ENVAR_NOVARIABLE 3
+!define ENVAR_NOVALUE 5
+
+Name "${PRODUCT_NAME}"
+RequestExecutionLevel admin
 InstallDir "$ProgramFiles\OpenConnect"
-InstallDirRegKey HKLM SOFTWARE\OpenConnect "Install_Dir"
+BrandingText " "
 
 ShowInstDetails hide
 ShowUninstDetails hide
 
 SetCompressor /FINAL lzma
 
-VIAddVersionKey ProductName "OpenConnect"
+VIAddVersionKey ProductName "${PRODUCT_NAME}"
 VIAddVersionKey FileVersion "${VERSION}"
 VIAddVersionKey FileDescription "OpenConnect installer"
 
-XPStyle on
-
+!include "MUI2.nsh"
+!include "FileFunc.nsh"
+!include "LogicLib.nsh"
+!include "Sections.nsh"
 !include "x64.nsh"
 
-Function .onInit
- ${If} ${RunningX64}
-   SetRegView 64
-   StrCpy $INSTDIR "$ProgramFiles64\OpenConnect"
- ${EndIf}
-FunctionEnd
+!addplugindir /x86-unicode "${ENVAR_PLUGIN_DIR}"
 
+!define MUI_ICON "${OPENCONNECT_ICON}"
+!define MUI_UNICON "${OPENCONNECT_ICON}"
 
-Page components
-Page directory
-Page instfiles
+Var PreviousInstallDir
+Var PreviousAddToPath
+Var PreviousPathEntry
+Var CurrentInstallDir
+Var SelectedAddToPath
 
-ComponentText "Select which optional components you want to install."
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "${OPENCONNECT_LICENSE}"
 
-DirText "Please select the installation folder."
+!define MUI_COMPONENTSPAGE_NODESC
+!define MUI_COMPONENTSPAGE_TEXT_TOP "Select which optional components you want to install. PATH changes apply to newly started command prompts and applications."
+!insertmacro MUI_PAGE_COMPONENTS
+
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
 
 Section "OpenConnect"
   SectionIn RO
@@ -55,24 +76,28 @@ Section "OpenConnect"
   FileOpen $0 "$INSTDIR\Online Documentation.url" w
   IfErrors done
     FileWrite $0 "[InternetShortcut]$\n"
-    FileWrite $0 "URL=https://www.infradead.org/openconnect$\n"
+    FileWrite $0 "URL=${PRODUCT_URL}$\n"
     FileWrite $0 "IconIndex=0$\n"
     FileWrite $0 "IconFile=$INSTDIR\openconnect.exe$\n"
     FileClose $0
   done:
 SectionEnd
 
-Section "Start Menu Shortcuts"
-  CreateDirectory "$SMPROGRAMS\OpenConnect"
-  CreateShortCut "$SMPROGRAMS\OpenConnect\Uninstall OpenConnect.lnk" "$INSTDIR\Uninstall OpenConnect.exe" "" "$INSTDIR\Uninstall OpenConnect.exe" 0
-  CreateShortCut "$SMPROGRAMS\OpenConnect\openconnect.exe.lnk" "$INSTDIR\.\openconnect.exe" "" "$INSTDIR\.\openconnect.exe" 0
-SectionEnd
-
-Section "Desktop Icons"
-  CreateShortCut "$DESKTOP\openconnect.exe.lnk" "$INSTDIR\.\openconnect.exe" "" "$INSTDIR\.\openconnect.exe" 0
+Section "Add OpenConnect to the system PATH" SEC_PATH
 SectionEnd
 
 Section "Uninstall"
+  StrCpy $PreviousPathEntry ""
+
+  ClearErrors
+  ReadRegStr $PreviousPathEntry HKLM "${UNINSTALL_KEY}" "PathEntry"
+  ${IfNot} ${Errors}
+  ${AndIf} $PreviousPathEntry != ""
+    Push "$PreviousPathEntry"
+    Call un.RemoveFromSystemPath
+    Pop $0
+  ${EndIf}
+
   Delete /rebootok "$DESKTOP\openconnect.exe.lnk"
   Delete /rebootok "$SMPROGRAMS\OpenConnect\openconnect.exe.lnk"
   Delete /rebootok "$SMPROGRAMS\OpenConnect\Uninstall OpenConnect.lnk"
@@ -80,10 +105,196 @@ Section "Uninstall"
 
   !include uninstfiles.nsh
   Delete /rebootok "$INSTDIR\Online Documentation.url"
+
+  DeleteRegKey HKLM "${UNINSTALL_KEY}"
+
   Delete /rebootok "$INSTDIR\Uninstall OpenConnect.exe"
   RMDir "$INSTDIR"
 SectionEnd
 
 Section -post
   WriteUninstaller "$INSTDIR\Uninstall OpenConnect.exe"
+
+  SectionGetFlags ${SEC_PATH} $0
+  IntOp $0 $0 & ${SF_SELECTED}
+
+  ; Keep PathEntry at the old location until its removal succeeds.
+  ${If} $0 != 0
+    StrCpy $SelectedAddToPath 1
+    StrCpy $0 ${ENVAR_SUCCESS}
+
+    ${If} $PreviousPathEntry != ""
+    ${AndIf} $PreviousPathEntry != $INSTDIR
+      Push "$PreviousPathEntry"
+      Call RemoveFromSystemPath
+      Pop $0
+      ${If} $0 == ${ENVAR_SUCCESS}
+        DeleteRegValue HKLM "${UNINSTALL_KEY}" "PathEntry"
+        StrCpy $PreviousPathEntry ""
+      ${Else}
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "PathEntry" "$PreviousPathEntry"
+      ${EndIf}
+    ${EndIf}
+
+    ${If} $0 == ${ENVAR_SUCCESS}
+      Push "$INSTDIR"
+      Call AddToSystemPath
+      Pop $0
+      ${If} $0 == ${ENVAR_SUCCESS}
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "PathEntry" "$INSTDIR"
+      ${ElseIf} $PreviousPathEntry != ""
+        ; A failed retry must not discard an entry that is still owned.
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "PathEntry" "$PreviousPathEntry"
+      ${Else}
+        DeleteRegValue HKLM "${UNINSTALL_KEY}" "PathEntry"
+      ${EndIf}
+    ${EndIf}
+  ${Else}
+    StrCpy $SelectedAddToPath 0
+
+    ${If} $PreviousPathEntry != ""
+      Push "$PreviousPathEntry"
+      Call RemoveFromSystemPath
+      Pop $0
+      ${If} $0 == ${ENVAR_SUCCESS}
+        DeleteRegValue HKLM "${UNINSTALL_KEY}" "PathEntry"
+      ${Else}
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "PathEntry" "$PreviousPathEntry"
+      ${EndIf}
+    ${Else}
+      DeleteRegValue HKLM "${UNINSTALL_KEY}" "PathEntry"
+    ${EndIf}
+  ${EndIf}
+
+  ; Remove known product files if the installation directory changed.
+  ${If} $PreviousInstallDir != ""
+    GetFullPathName $0 "$PreviousInstallDir\openconnect.exe"
+    GetFullPathName $1 "$INSTDIR\openconnect.exe"
+
+    ${If} $0 != $1
+      StrCpy $CurrentInstallDir "$INSTDIR"
+      StrCpy $INSTDIR "$PreviousInstallDir"
+      !include uninstfiles.nsh
+      Delete /rebootok "$INSTDIR\Online Documentation.url"
+      Delete /rebootok "$INSTDIR\Uninstall OpenConnect.exe"
+      RMDir "$INSTDIR"
+      StrCpy $INSTDIR "$CurrentInstallDir"
+
+    ${EndIf}
+  ${EndIf}
+
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "${PRODUCT_NAME}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "Publisher" "OpenConnect project"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "URLInfoAbout" "${PRODUCT_URL}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" "$\"$INSTDIR\openconnect.exe$\",0"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" "$\"$INSTDIR\Uninstall OpenConnect.exe$\""
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "QuietUninstallString" "$\"$INSTDIR\Uninstall OpenConnect.exe$\" /S"
+  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
+  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
+  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "AddToPath" $SelectedAddToPath
+
+  ClearErrors
+  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+  ${IfNot} ${Errors}
+    IntFmt $0 "0x%08X" $0
+    WriteRegDWORD HKLM "${UNINSTALL_KEY}" "EstimatedSize" $0
+  ${EndIf}
 SectionEnd
+
+Function AddToSystemPath
+  Exch $0
+  Push $1
+
+  EnVar::SetHKLM
+  EnVar::AddValue "Path" "$0"
+  Pop $1
+
+  ${If} $1 != ${ENVAR_SUCCESS}
+    DetailPrint "OpenConnect could not add $0 to the system PATH (EnVar error $1)."
+    IfSilent add_path_done
+    MessageBox MB_OK|MB_ICONEXCLAMATION "OpenConnect could not add $0 to the system PATH (EnVar error $1)."
+  ${EndIf}
+
+add_path_done:
+  StrCpy $0 "$1"
+  Pop $1
+  Exch $0
+FunctionEnd
+
+!macro DEFINE_REMOVE_FROM_SYSTEM_PATH UN LABEL
+Function ${UN}RemoveFromSystemPath
+  Exch $0
+  Push $1
+
+  EnVar::SetHKLM
+  EnVar::DeleteValue "Path" "$0"
+  Pop $1
+
+  ${If} $1 == ${ENVAR_NOVARIABLE}
+  ${OrIf} $1 == ${ENVAR_NOVALUE}
+    StrCpy $1 ${ENVAR_SUCCESS}
+  ${ElseIf} $1 != ${ENVAR_SUCCESS}
+    DetailPrint "OpenConnect could not remove $0 from the system PATH (EnVar error $1)."
+    IfSilent ${LABEL}_done
+    MessageBox MB_OK|MB_ICONEXCLAMATION "OpenConnect could not remove $0 from the system PATH (EnVar error $1)."
+  ${EndIf}
+
+${LABEL}_done:
+  StrCpy $0 "$1"
+  Pop $1
+  Exch $0
+FunctionEnd
+!macroend
+
+!insertmacro DEFINE_REMOVE_FROM_SYSTEM_PATH "" remove_path
+!insertmacro DEFINE_REMOVE_FROM_SYSTEM_PATH "un." un_remove_path
+
+Function .onInit
+  StrCpy $PreviousInstallDir ""
+  StrCpy $PreviousAddToPath -1
+  StrCpy $PreviousPathEntry ""
+
+  ${If} ${RunningX64}
+    SetRegView 64
+    StrCpy $INSTDIR "$ProgramFiles64\OpenConnect"
+  ${Else}
+    SetRegView 32
+    StrCpy $INSTDIR "$ProgramFiles\OpenConnect"
+  ${EndIf}
+
+  ClearErrors
+  ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "InstallLocation"
+  ${IfNot} ${Errors}
+  ${AndIf} $0 != ""
+    StrCpy $PreviousInstallDir "$0"
+    StrCpy $INSTDIR "$0"
+  ${EndIf}
+
+  ClearErrors
+  ReadRegDWORD $PreviousAddToPath HKLM "${UNINSTALL_KEY}" "AddToPath"
+  ${IfNot} ${Errors}
+    ${If} $PreviousAddToPath == 0
+      !insertmacro UnselectSection ${SEC_PATH}
+    ${Else}
+      !insertmacro SelectSection ${SEC_PATH}
+    ${EndIf}
+  ${Else}
+    StrCpy $PreviousAddToPath -1
+  ${EndIf}
+
+  ClearErrors
+  ReadRegStr $PreviousPathEntry HKLM "${UNINSTALL_KEY}" "PathEntry"
+  ${If} ${Errors}
+    StrCpy $PreviousPathEntry ""
+  ${EndIf}
+FunctionEnd
+
+Function un.onInit
+  ${If} ${RunningX64}
+    SetRegView 64
+  ${Else}
+    SetRegView 32
+  ${EndIf}
+FunctionEnd
