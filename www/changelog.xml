@@ -15,6 +15,8 @@
 <ul>
    <li><b>OpenConnect HEAD</b>
      <ul>
+       <li>Read IF-T/TLS messages that Ivanti Connect Secure 25.1+ splits across TLS records, fixing Pulse authentication (<a href="https://gitlab.com/openconnect/openconnect/-/issues/853">#853</a>).</li>
+       <li>Handle coalesced IF-T/TLS configuration packets from Ivanti v22.7+ servers (<a href="https://gitlab.com/openconnect/openconnect/-/issues/821">#821</a>, <a href="https://gitlab.com/openconnect/openconnect/-/issues/852">#852</a>).</li>
        <li>Add <tt>--tcp-keepalive</tt> option to prevent stateful firewalls from dropping idle connections (<a href="https://gitlab.com/openconnect/openconnect/-/merge_requests/626">!626</a>).</li>
        <li>Handle "code 5" password request from Pulse server (<a href="https://gitlab.com/openconnect/openconnect/-/merge_requests/595">!595</a>).</li>
        <li>Reduce PPP Protocol-Reject messages from error verbosity (<a href="https://gitlab.com/openconnect/openconnect/-/issues/845">#845</a>).</li>
