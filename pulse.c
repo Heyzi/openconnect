@@ -587,6 +587,33 @@ static int recv_ift_packet(struct openconnect_info *vpninfo, void *buf, int len)
 	return ret;
 }
 
+/* Ivanti Connect Secure 25.1+ fragments IF-T/TLS messages across TLS
+ * records, so a single ssl_read can return just the 16-byte header
+ * without the payload. Read a whole IF-T message: the header first, then
+ * the payload up to the length declared at offset 8 (bounded by buf, and
+ * never past the message so we don't consume the next one). */
+static int recv_ift_full(struct openconnect_info *vpninfo, void *buf, int len)
+{
+	unsigned char *bytes = buf;
+	uint32_t want = 16;
+	int got = 0;
+
+	while (got < (int)want) {
+		int ret = recv_ift_packet(vpninfo, bytes + got, want - got);
+		if (ret < 0)
+			return ret;
+		if (!ret)
+			return -EIO;
+		got += ret;
+		if (want == 16 && got >= 16) {
+			want = load_be32(bytes + 8);
+			if (want < 16 || want > (uint32_t)len)
+				return got;
+		}
+	}
+	return got;
+}
+
 static int send_ift_bytes(struct openconnect_info *vpninfo, void *bytes, int len)
 {
 	int ret;
@@ -661,7 +688,7 @@ static void *recv_eap_packet(struct openconnect_info *vpninfo, void *ttls, void 
 	int ret;
 
 	if (!ttls) {
-		ret = recv_ift_packet(vpninfo, buf, len);
+		ret = recv_ift_full(vpninfo, buf, len);
 		if (ret < 0)
 			return NULL;
 		if (!valid_ift_auth_eap_exj1(buf, ret)) {
@@ -1443,7 +1470,7 @@ static int pulse_authenticate(struct openconnect_info *vpninfo, int connecting)
 	if (ret)
 		goto out;
 
-	ret = recv_ift_packet(vpninfo, (void *)bytes, sizeof(bytes));
+	ret = recv_ift_full(vpninfo, (void *)bytes, sizeof(bytes));
 	if (ret < 0)
 		goto out;
 
@@ -1484,7 +1511,7 @@ static int pulse_authenticate(struct openconnect_info *vpninfo, int connecting)
 		goto out;
 
 	/* Await start of auth negotiations */
-	ret = recv_ift_packet(vpninfo, (void *)bytes, sizeof(bytes));
+	ret = recv_ift_full(vpninfo, (void *)bytes, sizeof(bytes));
 	if (ret < 0)
 		goto out;
 
@@ -1547,7 +1574,7 @@ static int pulse_authenticate(struct openconnect_info *vpninfo, int connecting)
 	 *     |            EAP-Juniper-1           |
 	 *     --------------------------------------
 	 */
-	ret = recv_ift_packet(vpninfo, (void *)bytes, sizeof(bytes));
+	ret = recv_ift_full(vpninfo, (void *)bytes, sizeof(bytes));
 	if (ret < 0)
 		goto out;
 
@@ -2033,7 +2060,7 @@ static int pulse_authenticate(struct openconnect_info *vpninfo, int connecting)
 		pulse_eap_ttls_recv(vpninfo, NULL, 0);
 	}
 
-	ret = recv_ift_packet(vpninfo, (void *)bytes, sizeof(bytes));
+	ret = recv_ift_full(vpninfo, (void *)bytes, sizeof(bytes));
 	if (ret < 0)
 		goto out;
 
