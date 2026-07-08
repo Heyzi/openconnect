@@ -1427,7 +1427,7 @@ JNIEXPORT void JNICALL Java_org_infradead_libopenconnect_LibOpenConnect_setVersi
 	SET_STRING_END();
 }
 
-JNIEXPORT void JNICALL Java_org_infradead_libopenconnect_LibOpenConnect_setUsergent(
+JNIEXPORT void JNICALL Java_org_infradead_libopenconnect_LibOpenConnect_setUseragent(
 	JNIEnv *jenv, jobject jobj, jstring jarg)
 {
 	SET_STRING_START_VOID()
