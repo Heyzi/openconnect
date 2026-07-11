@@ -131,6 +131,7 @@ if test "$have_win" = "yes"; then
    AC_CHECK_PROG(have_curl, curl, yes)
    AC_CHECK_PROG(have_unzip, unzip, yes)
    AC_CHECK_PROG(have_jq, jq, yes)
+   AC_PATH_PROG([ZIP], [zip], [])
 
    if test "${wintun_arch}" != ""; then
       if test "${have_curl}" != "yes"; then
@@ -153,7 +154,20 @@ if test "$MAKENSIS" != ""; then
     fi
 fi
 
+build_zip=no
+if test "$have_win" = "yes"; then
+    if test "$ZIP" = ""; then
+	AC_MSG_WARN([Disabling Windows ZIP package since zip was not found])
+    elif test "${wintun_arch}" = ""; then
+	AC_MSG_WARN([Disabling Windows ZIP package since wintun cannot be included])
+    else
+	build_zip=yes
+    fi
+fi
+
 AM_CONDITIONAL(BUILD_NSIS, [ test "$build_nsis" = "yes" ])
+AM_CONDITIONAL(BUILD_ZIP, [ test "$build_zip" = "yes" ])
+AM_CONDITIONAL(BUILD_WINDOWS_PACKAGE, [ test "$build_nsis" = "yes" -o "$build_zip" = "yes" ])
 AM_CONDITIONAL(OPENCONNECT_WINTUN, [ test "${wintun_arch}" != "" ])
 
 AC_ARG_WITH([external-browser],
@@ -934,7 +948,7 @@ PKG_CHECK_MODULES([LIBLZ4], [liblz4], [
 ])
 fi
 
-if test "$build_nsis" = "yes"; then
+if test "$build_nsis" = "yes" -o "$build_zip" = "yes"; then
    case $host_os in
       *mingw32*)
          if test "$host_cpu" = "x86_64"; then
@@ -1542,6 +1556,7 @@ SUMMARY([Flask tests], [$have_python36_flask])
 SUMMARY([Insecure debugging], [$insecure_debugging])
 if test "$have_win" = "yes"; then
  SUMMARY([NSIS installer], [$build_nsis])
+ SUMMARY([Windows ZIP package], [$build_zip])
  SUMMARY([wintun architecture], [$wintun_arch])
 fi
 SUMMARY([External browser], [${with_external_browser}])
