@@ -178,6 +178,12 @@ option sets the private key for the secondary certificate (see
 .B \-C,\-\-cookie=COOKIE
 Use authentication cookie
 .IR COOKIE .
+.TAG opt-gp-app-version
+.TP
+.B \-\-gp\-app\-version=VERSION
+When using GlobalProtect protocol, report the specified client app version to the server.
+Some servers require minimum versions (e.g., 6.1.4 or higher). Common values include
+6.1.4, 6.2.0, 6.3.0, and 6.3.3. Default is 6.3.0.
 .TAG opt-cookie-on-stdin
 .TP
 .B \-\-cookie\-on\-stdin

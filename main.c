@@ -221,6 +221,7 @@ enum {
 	OPT_MULTICERT_CERT,
 	OPT_MULTICERT_KEY,
 	OPT_MULTICERT_KEY_PASSWORD,
+	OPT_GP_APP_VERSION,
 };
 
 #ifdef __sun__
@@ -323,6 +324,7 @@ static const struct option long_options[] = {
 	OPTION("mca-certificate", 1, OPT_MULTICERT_CERT),
 	OPTION("mca-key", 1, OPT_MULTICERT_KEY),
 	OPTION("mca-key-password", 1, OPT_MULTICERT_KEY_PASSWORD),
+	OPTION("gp-app-version", 1, OPT_GP_APP_VERSION),
 	OPTION(NULL, 0, 0)
 };
 
@@ -1074,6 +1076,7 @@ static void usage(void)
 	printf("      --authenticate              %s\n", _("Authenticate only and print login info"));
 	printf("      --cookieonly                %s\n", _("Fetch and print cookie only; don't connect"));
 	printf("      --printcookie               %s\n", _("Print cookie before connecting"));
+	printf("      --gp-app-version=VERSION    %s\n", _("Report GlobalProtect app version VERSION"));
 
 #ifndef _WIN32
 	printf("\n%s:\n", _("Process control"));
@@ -2053,6 +2056,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'C':
 			vpninfo->cookie = dup_config_arg();
+			break;
+		case OPT_GP_APP_VERSION:
+			vpninfo->gp_app_version = keep_config_arg();
 			break;
 		case 'c':
 			vpninfo->certinfo[0].cert = dup_config_arg();

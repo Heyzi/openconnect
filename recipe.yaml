@@ -1,0 +1,67 @@
+package:
+  name: openconnect
+  version: "9.12"
+
+source:
+  path: "."
+
+build:
+  number: 1
+  script:
+    - ./autogen.sh
+    - ./configure --prefix=$PREFIX --enable-shared --disable-static
+    - make -j$CPU_COUNT openconnect libopenconnect.la
+    - make install-exec install-pkgconfigDATA install-man8
+    - cp $PREFIX/sbin/openconnect $PREFIX/bin/openconn-cli
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - make
+    - autoconf
+    - automake
+    - libtool
+    - pkg-config
+    - libxml2-devel
+  host:
+    - libxml2
+    - libxml2-devel
+    - openssl
+    - zlib
+    - gnutls
+    - nettle
+    - gmp
+    - libtasn1
+    - p11-kit
+    - lz4-c
+    - libiconv
+  run:
+    - libxml2
+    - openssl
+    - zlib
+    - gnutls
+
+tests:
+  - package_contents:
+      bin:
+        - openconn-cli
+      files:
+        - sbin/openconnect
+        - lib/libopenconnect.so
+        - lib/libopenconnect.so.5
+        - lib/libopenconnect.so.5.9.0
+        - share/man/man8/openconnect.8
+  # - script:
+  #     - openconnect --help
+  #     - openconnect --help | grep -q "gp-app-version" && echo "GlobalProtect app version patch found!"
+  #     - openconn-cli --help
+  #     - openconn-cli --help | grep -q "gp-app-version" && echo "GlobalProtect app version patch found in openconn-cli!"
+
+about:
+  homepage: https://www.infradead.org/openconnect/
+  license: LGPL-2.1-only
+  summary: OpenConnect VPN client with GlobalProtect app version patch
+  description: |
+    OpenConnect is a client for Cisco's AnyConnect SSL VPN and other compatible
+    VPN servers. This version includes a patch that adds the --gp-app-version
+    option for GlobalProtect protocol compatibility.

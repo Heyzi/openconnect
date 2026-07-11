@@ -460,6 +460,7 @@ struct openconnect_info {
 	char *csd_starturl;
 	char *csd_waiturl;
 	char *csd_preurl;
+	char *gp_app_version;
 
 	char *csd_scriptname;
 	xmlNode *opaque_srvdata;

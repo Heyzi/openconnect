@@ -1,0 +1,38 @@
+[workspace]
+name = "openconnect"
+version = "9.12"
+description = "OpenConnect VPN client with GlobalProtect app version patch"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# This project applies the user-configurable-globalprotect-app-version.patch
+# which adds the --gp-app-version option for GlobalProtect server compatibility
+
+[dependencies]
+# Build tools and rattler-build for creating conda packages
+rattler-build = "*"
+
+[tasks]
+# Build OpenConnect using rattler-build
+build = "rattler-build build --recipe . --output-dir .pixi/build"
+
+# Build and install the package locally
+install = { depends-on = ["build"], cmd = "pixi global install -c file://$(pwd)/.pixi/build -c conda-forge openconnect" }
+
+# Clean build artifacts
+clean = "rm -rf .pixi/build build_output .pixi/envs/*/conda-bld"
+
+# Test the built OpenConnect binary
+test = "openconn-cli --help | grep 'gp-app-version' && echo 'GlobalProtect app version patch found!' || echo '❌ GlobalProtect app version patch NOT found'"
+
+# Show OpenConnect version and build info
+info = "openconnect --version || echo 'Build first with: pixi run build'"
+
+# Development workflow: clean, build, and test
+dev = { depends-on = ["clean", "build", "test"] }
+
+# Complete workflow: build, install, and test
+all = { depends-on = ["build", "install", "test"] }
+
+[environments]
+default = { features = [], solve-group = "default" }
