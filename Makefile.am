@@ -529,7 +529,7 @@ openconnect-$(INSTALLER_SUFFIX).zip: version.c $(WINDOWS_PACKAGE_FILE_LISTS) $(E
 	    $(MKDIR_P) "$${dest%/*}"; \
 	    cp "$$f" "$$dest"; \
 	done; \
-	(cd "$$ZIP_STAGE" && "$(ZIP)" -q "$(abs_builddir)/$$ZIP_TMP" -@ < "$(abs_builddir)/$$ZIP_MANIFEST"); \
+	(cd "$$ZIP_STAGE" && "$(ZIP)" -9 -q "$(abs_builddir)/$$ZIP_TMP" -@ < "$(abs_builddir)/$$ZIP_MANIFEST"); \
 	mv -f "$$ZIP_TMP" "$$ZIP_NAME"; \
 	ln -f "$$ZIP_NAME" $@
 
