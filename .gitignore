@@ -69,5 +69,7 @@ file-list.txt
 *.nsi
 *.nsh
 /openconnect-installer*.exe
+/openconnect-MinGW*.zip
+/.openconnect-zip-*
 /tap-windows*.exe
 /vpnc-script-win.js

@@ -12,8 +12,12 @@ endif
 if USE_NLS
 SUBDIRS += po
 endif
+noinst_DATA =
 if BUILD_NSIS
-noinst_DATA = openconnect-installer-$(INSTALLER_SUFFIX).exe
+noinst_DATA += openconnect-installer-$(INSTALLER_SUFFIX).exe
+endif
+if BUILD_ZIP
+noinst_DATA += openconnect-$(INSTALLER_SUFFIX).zip
 endif
 
 lib_LTLIBRARIES = libopenconnect.la
@@ -393,8 +397,8 @@ po/$(PACKAGE).pot: $(POTFILES) version.sh
 
 ACLOCAL_AMFLAGS = -I m4
 
-if BUILD_NSIS
-DISTCLEANFILES += .*.dll.d .*.exe.d file-list*.txt instfiles.nsh uninstfiles.nsh vpnc-script-win.js openconnect.nsi openconnect-installer-*.exe
+if BUILD_WINDOWS_PACKAGE
+DISTCLEANFILES += .*.dll.d .*.exe.d file-list*.txt vpnc-script-win.js
 
 # Including openconnect-gui.exe and Qt bits (as a hack)
 #EXTRA_EXECUTABLES := openconnect-gui.exe qwindows.dll qwindowsvistastyle.dll
@@ -404,16 +408,24 @@ DISTCLEANFILES += .*.dll.d .*.exe.d file-list*.txt instfiles.nsh uninstfiles.nsh
 DLL_EXECUTABLES := openconnect$(EXEEXT) $(EXTRA_EXECUTABLES)
 endif
 
+if BUILD_NSIS
+DISTCLEANFILES += instfiles.nsh uninstfiles.nsh openconnect.nsi openconnect-installer-*.exe
+endif
+
+if BUILD_ZIP
+DISTCLEANFILES += openconnect-$(INSTALLER_SUFFIX)*.zip
+endif
+
 if OPENCONNECT_WINTUN
 WINTUN_DLL = .libs/wintun.dll
 DISTCLEANFILES += $(WINTUN_DLL)
 sbin_SCRIPTS += .libs/wintun.dll
-if BUILD_NSIS
+if BUILD_WINDOWS_PACKAGE
 DLL_EXECUTABLES += wintun.dll
 endif
 endif
 
-if BUILD_NSIS
+if BUILD_WINDOWS_PACKAGE
 if OPENCONNECT_SYSTEM_KEYS
 DLL_EXECUTABLES += list-system-keys$(EXEEXT)
 endif
@@ -423,10 +435,10 @@ endif
 # want the normal top-level Makefile doing that directly because it would try
 # to do so *every* time it's invoked, just because of the -include directives.
 # So we split it out to a *separate* Makefile.dlldeps to be invoked only when
-# we are actually building the NSIS installer.
+# we are actually building a Windows package.
 #
 # The 'file-list.txt' contains the full transitive list of executables and
-# DLLs to be included in the installer. It potentially needs to be rebuilt if
+# DLLs to be included in the package. It potentially needs to be rebuilt if
 # any of them change (as they may now link against a different set of DLLs),
 # and *that* much does need to be visible to this top-level Makefile, so
 # include them if they exist.
@@ -436,7 +448,7 @@ export V AM_DEFAULT_VERBOSITY bindir libdir OBJDUMP DLL_EXECUTABLES EXTRA_DLLDIR
 
 file-list.txt: Makefile.dlldeps openconnect$(EXEEXT) libopenconnect.la $(WINTUN_DLL)
 	@$(MAKE) --no-print-directory -f $< $@
-endif #BUILD_NSIS
+endif #BUILD_WINDOWS_PACKAGE
 
 # Wintun Layer 3 TUN driver for Windows 7 and newer
 # (see https://wintun.net)
@@ -457,7 +469,7 @@ vpnc-script-win.js:
 	    jq -r '.[0] | "// This script matches the version found at " + (.web_url | sub("/commit/"; "/blob/")) + "/vpnc-script-win.js\n// Updated on " + .authored_date[:10] + " by " + .author_name + " <" + .author_email + "> (\"" + .title + "\")\n//"' > $@
 	curl https://gitlab.com/openconnect/vpnc-scripts/raw/master/vpnc-script-win.js >> $@
 
-if BUILD_NSIS
+if BUILD_WINDOWS_PACKAGE
 # Let make find the file in VPATH
 file-list-%.txt: %
 	echo $< > $@
@@ -468,13 +480,66 @@ file-list-extra.txt:
 # Rather than trying to get clever in NSIS and iterate over lists,
 # just emit raw snippets to be included separately in the install
 # and uninstall sections.
-instfiles.nsh: file-list.txt file-list-vpnc-script-win.js.txt file-list-extra.txt
+WINDOWS_PACKAGE_FILE_LISTS = file-list.txt file-list-vpnc-script-win.js.txt file-list-extra.txt
+
+if BUILD_NSIS
+instfiles.nsh: $(WINDOWS_PACKAGE_FILE_LISTS)
 	$(AM_V_GEN) ( for f in `grep -hv "^$(libdir)/qt5/plugins" $^`; do g=`$(CYGPATH_W) $$f`; echo File \"$$g\"; done; \
 	grep -h "^$(libdir)/qt5/plugins" $^ | sed 's%\(.*/qt5/plugins\)/\([^/]*\)/\([^/]*\)%SetOutPath "$$INSTDIR\\\\\2"\nFile "\1/\2/\3"%' ) > $@
 
-uninstfiles.nsh: file-list.txt file-list-vpnc-script-win.js.txt file-list-extra.txt
+uninstfiles.nsh: $(WINDOWS_PACKAGE_FILE_LISTS)
 	$(AM_V_GEN) ( grep -hv "^$(libdir)/qt5/plugins" $^ | sed 's%\(.*/\)\?\([^/]*\)%Delete /rebootok "$$INSTDIR\\\\\2"%' ; \
 	grep -h "^$(libdir)/qt5/plugins" $^ | sed 's%.*/qt5/plugins/\([^/]*\)/\([^/]*\)%Delete /rebootok "$$INSTDIR\\\\\1\\\\\2"\nRMDir "$$INSTDIR\\\\\1"%' ) > $@
+endif
+
+if BUILD_ZIP
+openconnect-$(INSTALLER_SUFFIX).zip: version.c $(WINDOWS_PACKAGE_FILE_LISTS) $(EXTRA_NSIS_FILES)
+	$(AM_V_GEN)set -e; \
+	VERSION=$$(cut -f2 -d\" version.c); \
+	ZIP_NAME="openconnect-$(INSTALLER_SUFFIX)-$${VERSION}.zip"; \
+	ZIP_STAGE=".openconnect-zip-$(INSTALLER_SUFFIX)"; \
+	ZIP_MANIFEST=".openconnect-zip-$(INSTALLER_SUFFIX).list"; \
+	ZIP_TMP=".openconnect-zip-$(INSTALLER_SUFFIX).tmp.zip"; \
+	rm -rf "$$ZIP_STAGE"; \
+	rm -f "$$ZIP_MANIFEST" "$$ZIP_TMP"; \
+	trap 'rm -rf "$$ZIP_STAGE"; rm -f "$$ZIP_MANIFEST" "$$ZIP_TMP"' 0 1 2 3 15; \
+	$(MKDIR_P) "$$ZIP_STAGE"; \
+	: > "$$ZIP_MANIFEST"; \
+	grep -hv "^$(libdir)/qt5/plugins" $(WINDOWS_PACKAGE_FILE_LISTS) | \
+	while IFS= read -r f; do \
+	    test -n "$$f" || continue; \
+	    rel=$${f##*/}; \
+	    if grep -F -i -x -e "$$rel" "$$ZIP_MANIFEST" >/dev/null; then \
+		echo "Duplicate Windows package destination: $$rel" >&2; \
+		exit 1; \
+	    fi; \
+	    printf '%s\n' "$$rel" >> "$$ZIP_MANIFEST"; \
+	    cp "$$f" "$$ZIP_STAGE/$$rel"; \
+	done; \
+	grep -h "^$(libdir)/qt5/plugins" $(WINDOWS_PACKAGE_FILE_LISTS) | \
+	while IFS= read -r f; do \
+	    test -n "$$f" || continue; \
+	    rel=$${f#$(libdir)/qt5/plugins/}; \
+	    dest="$$ZIP_STAGE/$$rel"; \
+	    if grep -F -i -x -e "$$rel" "$$ZIP_MANIFEST" >/dev/null; then \
+		echo "Duplicate Windows package destination: $$rel" >&2; \
+		exit 1; \
+	    fi; \
+	    printf '%s\n' "$$rel" >> "$$ZIP_MANIFEST"; \
+	    $(MKDIR_P) "$${dest%/*}"; \
+	    cp "$$f" "$$dest"; \
+	done; \
+	(cd "$$ZIP_STAGE" && "$(ZIP)" -9 -q "$(abs_builddir)/$$ZIP_TMP" -@ < "$(abs_builddir)/$$ZIP_MANIFEST"); \
+	mv -f "$$ZIP_TMP" "$$ZIP_NAME"; \
+	ln -f "$$ZIP_NAME" $@
+
+distclean-local:
+	rm -rf .openconnect-zip-$(INSTALLER_SUFFIX)*
+endif
+
+endif #BUILD_WINDOWS_PACKAGE
+
+if BUILD_NSIS
 
 # Theoretically makensis can define symbols with the -D command line
 # option and much of this could just be done that way, but I couldn't
@@ -501,7 +566,7 @@ am__v_MAKENSIS_ = $(am__v_MAKENSIS_$(AM_DEFAULT_VERBOSITY))
 am__v_MAKENSIS_0 = @echo "  MAKENSIS   " $@;
 am__v_MAKENSIS_1 =
 
-openconnect-installer-$(INSTALLER_SUFFIX).exe: openconnect.nsi instfiles.nsh uninstfiles.nsh $(srcdir)/openconnect.nsi.in html-recursive
+openconnect-installer-$(INSTALLER_SUFFIX).exe: openconnect.nsi instfiles.nsh uninstfiles.nsh $(EXTRA_NSIS_FILES) $(srcdir)/openconnect.nsi.in html-recursive
 	$(AM_V_MAKENSIS) $(MAKENSIS) $<
 	ln -f "$$(grep -E '^OutFile' openconnect.nsi | cut -f2 -d\")" $@
 

@@ -784,6 +784,7 @@ MinGW32/GnuTLS:
     paths:
       - tests/*.log
       - openconnect-installer*.exe
+      - openconnect-MinGW*.zip
 
 MinGW32/OpenSSL:
   stage: test-windows
@@ -809,6 +810,7 @@ MinGW32/OpenSSL:
     paths:
       - tests/*.log
       - openconnect-installer*.exe
+      - openconnect-MinGW*.zip
 
 MinGW64/GnuTLS:
   stage: test-windows
@@ -835,6 +837,7 @@ MinGW64/GnuTLS:
     paths:
       - tests/*.log
       - openconnect-installer*.exe
+      - openconnect-MinGW*.zip
 
 MinGW64/OpenSSL:
   stage: test-windows
@@ -861,6 +864,7 @@ MinGW64/OpenSSL:
     paths:
       - tests/*.log
       - openconnect-installer*.exe
+      - openconnect-MinGW*.zip
 
 # Based on https://stackoverflow.com/a/65478446
 persist-windows-builds-for-tagged-releases:
@@ -875,11 +879,12 @@ persist-windows-builds-for-tagged-releases:
   rules:
     - if: '$CI_COMMIT_TAG != null'
   script:
-    - echo "Preventing openconnect-installer.exe artifacts from expiring since this is a tagged build"
+    - echo "Preventing Windows installer and ZIP artifacts from expiring since this is a tagged build"
   artifacts:
     # Specify artifacts from previous jobs to be persisted indefinitely
     paths:
       - openconnect-installer*.exe
+      - openconnect-MinGW*.zip
     expire_in: never
 
 ################################################################################
