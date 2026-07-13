@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "baseConfig": {
+      "type": "object",
+      "not": { "required": ["model_list"] }
+    },
+    "baseConfigMap": {
+      "type": "object",
+      "required": ["create", "name", "key"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

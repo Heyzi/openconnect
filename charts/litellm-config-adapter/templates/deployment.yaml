@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adapter.fullname" . }}
+  labels:
+    {{- include "adapter.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "adapter.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "adapter.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "adapter.fullname" . }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: adapter
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --base-configmap={{ .Values.baseConfigMap.name }}
+            - --base-config-key={{ .Values.baseConfigMap.key }}
+            - --configmap={{ .Values.configMap.name }}
+            - --config-key={{ .Values.configMap.key }}
+            - --deployment={{ .Values.litellm.deploymentName }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}

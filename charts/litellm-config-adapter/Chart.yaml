@@ -1,0 +1,6 @@
+apiVersion: v2
+name: litellm-config-adapter
+description: Discovers ready vLLM Services and generates LiteLLM configuration
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
