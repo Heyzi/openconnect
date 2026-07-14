@@ -907,6 +907,11 @@ static void macos_device_identity(char model[128], char unique_id[65],
 		hex_encode(unique_id_global, 41, sha1, sizeof(sha1));
 	}
 	macos_primary_mac(mac);
+	{
+		const char *override = getenv("OPENCONNECT_MAC_OVERRIDE");
+		if (override && override[0])
+			strlcpy(mac, override, 18);
+	}
 }
 #endif
 

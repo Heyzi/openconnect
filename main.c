@@ -220,6 +220,7 @@ enum {
 	OPT_MULTICERT_CERT,
 	OPT_MULTICERT_KEY,
 	OPT_MULTICERT_KEY_PASSWORD,
+	OPT_MAC_ADDRESS,
 };
 
 #ifdef __sun__
@@ -294,6 +295,7 @@ static const struct option long_options[] = {
 	OPTION("useragent", 1, OPT_USERAGENT),
 	OPTION("version-string", 1, OPT_VERSION),
 	OPTION("local-hostname", 1, OPT_LOCAL_HOSTNAME),
+	OPTION("mac-address", 1, OPT_MAC_ADDRESS),
 	OPTION("disable-ipv6", 0, OPT_DISABLE_IPV6),
 	OPTION("no-proxy", 0, OPT_NO_PROXY),
 	OPTION("libproxy", 0, OPT_LIBPROXY),
@@ -1092,6 +1094,7 @@ static void usage(void)
 	printf("\n%s:\n", _("VPN configuration script"));
 	printf("  -i, --interface=IFNAME          %s\n", _("Use IFNAME for tunnel interface"));
 	printf("  -s, --script=SCRIPT             %s\n", _("Shell command line for using a vpnc-compatible config script"));
+	printf("      --mac-address=MAC           %s\n", _("Override macOS device MAC address sent during authentication"));
 	printf("                                  %s: \"%s\"\n", _("default"), default_vpncscript);
 #ifndef _WIN32
 	printf("  -S, --script-tun                %s\n", _("Pass traffic to 'script' program, not tun"));
@@ -1495,6 +1498,8 @@ static int autocomplete(int argc, char **argv)
 
 			case OPT_LOCAL_HOSTNAME: /* --local-hostname */
 				autocomplete_special("HOSTNAME", comp_opt, prefixlen, NULL);
+				break;
+			case OPT_MAC_ADDRESS: /* --mac-address */
 				break;
 
 			case OPT_CSD_USER: /* --csd-user */
@@ -2037,6 +2042,23 @@ int main(int argc, char *argv[])
 			break;
 		case OPT_NO_XMLPOST:
 			openconnect_set_xmlpost(vpninfo, 0);
+			break;
+		case OPT_MAC_ADDRESS:
+			assert_nonnull_config_arg("mac-address", config_arg);
+			if (strlen(config_arg) != 17 ||
+			    !isxdigit(config_arg[0]) || !isxdigit(config_arg[1]) ||
+			    !isxdigit(config_arg[3]) || !isxdigit(config_arg[4]) ||
+			    !isxdigit(config_arg[6]) || !isxdigit(config_arg[7]) ||
+			    !isxdigit(config_arg[9]) || !isxdigit(config_arg[10]) ||
+			    !isxdigit(config_arg[12]) || !isxdigit(config_arg[13]) ||
+			    !isxdigit(config_arg[15]) || !isxdigit(config_arg[16]) ||
+			    (config_arg[2] != ':' && config_arg[2] != '-') ||
+			    config_arg[5] != config_arg[2] || config_arg[8] != config_arg[2] ||
+			    config_arg[11] != config_arg[2] || config_arg[14] != config_arg[2]) {
+				fprintf(stderr, _("Invalid MAC address '%s'\n"), config_arg);
+				exit(1);
+			}
+			setenv("OPENCONNECT_MAC_OVERRIDE", config_arg, 1);
 			break;
 		case OPT_NON_INTER:
 			non_inter = 1;

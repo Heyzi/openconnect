@@ -1,5 +1,7 @@
 *~
 .#*
+.DS_Store
+**/.DS_Store
 version.c
 .*.o.dep
 .*.h.dep
@@ -19,8 +21,21 @@ version.c
 /install-sh
 /ltmain.sh
 /missing
+/compile
+/config.h
+/config.h.in
+/stamp-h1
+/m4/libtool.m4
+/m4/ltoptions.m4
+/m4/ltsugar.m4
+/m4/ltversion.m4
+/m4/lt~obsolete.m4
 
 /.deps/
+**/.deps/
+**/.libs/
+**/.dirstamp
+**/*.lo
 /config.log
 /config.status
 /libopenconnect.map
@@ -30,6 +45,8 @@ version.c
 
 openconnect
 nm-openconnect-auth-dialog
+/list-system-keys
+/os-tcp-mtu
 Make.config
 Makefile.in
 Makefile
@@ -63,6 +80,18 @@ Makefile
 test-driver
 tests/*.log
 tests/*.trs
+/tests/buftest
+/tests/lzstest
+/tests/seqtest
+/tests/serverhash
+/tests/softhsm2.conf
+/tests/configs/test-user-cert.config
+/tests/configs/test-user-pass.config
+
+# OpenConnect Desktop generated artifacts
+/macos-app/dist/
+/macos-app/coverage.out
+/macos-app/*.prof
 
 # Leftovers from constructing the Windows installer
 file-list.txt
