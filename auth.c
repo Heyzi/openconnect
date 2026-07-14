@@ -36,6 +36,16 @@
 #include <ctype.h>
 #include <errno.h>
 
+#ifdef __APPLE__
+#include <CommonCrypto/CommonDigest.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <net/if_dl.h>
+#include <sys/sysctl.h>
+#endif
+
 enum {
 	CERT1_REQUESTED = (1<<0),
 	CERT1_AUTHENTICATED = (1<<1),
@@ -809,6 +819,97 @@ static int handle_auth_form(struct openconnect_info *vpninfo, struct oc_auth_for
  *   <host-scan-token><!-- vpninfo->csd_ticket --></host-scan-token>
  */
 
+#ifdef __APPLE__
+static void hex_encode(char *out, size_t out_len,
+		       const unsigned char *value, size_t value_len)
+{
+	static const char hex[] = "0123456789ABCDEF";
+	size_t i;
+
+	if (out_len < value_len * 2 + 1) {
+		if (out_len)
+			out[0] = 0;
+		return;
+	}
+	for (i = 0; i < value_len; i++) {
+		out[i * 2] = hex[value[i] >> 4];
+		out[i * 2 + 1] = hex[value[i] & 0x0f];
+	}
+	out[value_len * 2] = 0;
+}
+
+static void macos_primary_mac(char mac[18])
+{
+	struct ifaddrs *addresses = NULL, *item;
+	char primary[IFNAMSIZ] = { 0 };
+
+	mac[0] = 0;
+	if (getifaddrs(&addresses))
+		return;
+
+	/* Authentication happens before the tunnel is created.  Prefer an active,
+	 * non-loopback interface with IPv4, then find its AF_LINK address. */
+	for (item = addresses; item; item = item->ifa_next) {
+		if (item->ifa_addr && item->ifa_addr->sa_family == AF_INET &&
+		    (item->ifa_flags & IFF_UP) && !(item->ifa_flags & IFF_LOOPBACK)) {
+			strlcpy(primary, item->ifa_name, sizeof(primary));
+			break;
+		}
+	}
+	for (item = addresses; item; item = item->ifa_next) {
+		const struct sockaddr_dl *sdl;
+		const unsigned char *bytes;
+
+		if (!item->ifa_addr || item->ifa_addr->sa_family != AF_LINK ||
+		    (primary[0] && strcmp(primary, item->ifa_name)))
+			continue;
+		sdl = (const struct sockaddr_dl *)item->ifa_addr;
+		if (sdl->sdl_alen != 6)
+			continue;
+		bytes = (const unsigned char *)LLADDR(sdl);
+		snprintf(mac, 18, "%02x-%02x-%02x-%02x-%02x-%02x",
+			 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
+		break;
+	}
+	freeifaddrs(addresses);
+}
+
+static void macos_device_identity(char model[128], char unique_id[65],
+				  char unique_id_global[41], char mac[18])
+{
+	unsigned char sha256[CC_SHA256_DIGEST_LENGTH];
+	unsigned char sha1[CC_SHA1_DIGEST_LENGTH];
+	char uuid[256] = { 0 };
+	size_t model_len = 128;
+	io_registry_entry_t root;
+	CFTypeRef value = NULL;
+
+	model[0] = unique_id[0] = unique_id_global[0] = mac[0] = 0;
+	if (sysctlbyname("hw.model", model, &model_len, NULL, 0))
+		strlcpy(model, "N/A", 128);
+
+	root = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/");
+	if (root) {
+		value = IORegistryEntryCreateCFProperty(root, CFSTR("IOPlatformUUID"),
+						      kCFAllocatorDefault, 0);
+		IOObjectRelease(root);
+	}
+	if (value && CFGetTypeID(value) == CFStringGetTypeID())
+		CFStringGetCString((CFStringRef)value, uuid, sizeof(uuid),
+				     kCFStringEncodingUTF8);
+	if (value)
+		CFRelease(value);
+
+	if (uuid[0]) {
+		CC_SHA256(uuid, (CC_LONG)strlen(uuid), sha256);
+		CC_SHA1(uuid, (CC_LONG)strlen(uuid), sha1);
+		hex_encode(unique_id, 65, sha256, sizeof(sha256));
+		hex_encode(unique_id_global, 41, sha1, sizeof(sha1));
+	}
+	macos_primary_mac(mac);
+}
+#endif
+
 #define XCAST(x) ((const xmlChar *)(x))
 
 static xmlDocPtr xmlpost_new_query(struct openconnect_info *vpninfo, const char *type,
@@ -816,6 +917,10 @@ static xmlDocPtr xmlpost_new_query(struct openconnect_info *vpninfo, const char 
 {
 	xmlDocPtr doc;
 	xmlNodePtr root, node, capabilities;
+#ifdef __APPLE__
+	char device_type[128], unique_id[65], unique_id_global[41], mac[18];
+	macos_device_identity(device_type, unique_id, unique_id_global, mac);
+#endif
 
 	doc = xmlNewDoc(XCAST("1.0"));
 	if (!doc)
@@ -849,6 +954,24 @@ static xmlDocPtr xmlpost_new_query(struct openconnect_info *vpninfo, const char 
 		    !xmlNewProp(node, XCAST("unique-id"), XCAST(vpninfo->mobile_device_uniqueid)))
 			goto bad;
 	}
+
+#ifdef __APPLE__
+	if (device_type[0] &&
+	    !xmlNewProp(node, XCAST("device-type"), XCAST(device_type)))
+		goto bad;
+	if (unique_id[0] &&
+	    !xmlNewProp(node, XCAST("unique-id"), XCAST(unique_id)))
+		goto bad;
+	if (unique_id_global[0] &&
+	    !xmlNewProp(node, XCAST("unique-id-global"), XCAST(unique_id_global)))
+		goto bad;
+	if (mac[0]) {
+		xmlNodePtr list = xmlNewNode(NULL, XCAST("mac-address-list"));
+		if (!list || !xmlAddChild(root, list) ||
+		    !xmlNewTextChild(list, NULL, XCAST("mac-address"), XCAST(mac)))
+			goto bad;
+	}
+#endif
 
 	capabilities = xmlNewNode(NULL, XCAST("capabilities"));
 	if (!capabilities)
