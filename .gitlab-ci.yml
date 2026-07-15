@@ -1,0 +1,128 @@
+stages:
+  - validate
+  - build
+  - publish
+  - deploy
+
+default:
+  interruptible: true
+
+variables:
+  GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
+  GOMODCACHE: "$CI_PROJECT_DIR/.cache/go-mod"
+  DEPLOY_NAMESPACE: "litellm"
+  HELM_RELEASE_NAME: "litellm-config-adapter"
+
+.go:
+  image: golang:1.24
+  cache:
+    key: go-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .cache/go-build
+      - .cache/go-mod
+
+go-checks:
+  extends: .go
+  stage: validate
+  script:
+    - test -z "$(gofmt -l cmd internal)"
+    - go vet ./...
+    - go test -race -coverprofile=coverage.out ./...
+    - go tool cover -func=coverage.out
+  coverage: '/total:\s+\(statements\)\s+([0-9.]+)%/'
+  artifacts:
+    when: always
+    paths:
+      - coverage.out
+
+helm-checks:
+  image:
+    name: alpine/helm:3.17.3
+    entrypoint: [""]
+  stage: validate
+  script:
+    - helm lint charts/litellm-config-adapter
+    - helm template test charts/litellm-config-adapter --namespace test > rendered.yaml
+    - helm template test charts/litellm-config-adapter --namespace test --set discovery.clusterWide=true > rendered-cluster-wide.yaml
+    - if helm template test charts/litellm-config-adapter --set replicaCount=2 >/dev/null 2>&1; then echo "replicaCount=2 must be rejected"; exit 1; fi
+  artifacts:
+    paths:
+      - rendered.yaml
+      - rendered-cluster-wide.yaml
+
+build-binary:
+  extends: .go
+  stage: build
+  script:
+    - CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/litellm-config-adapter ./cmd/litellm-config-adapter
+  artifacts:
+    paths:
+      - bin/litellm-config-adapter
+
+package-chart:
+  image:
+    name: alpine/helm:3.17.3
+    entrypoint: [""]
+  stage: build
+  script:
+    - helm package charts/litellm-config-adapter --destination dist
+  artifacts:
+    paths:
+      - dist/*.tgz
+
+publish-image:
+  image: docker:27.5-cli
+  stage: publish
+  services:
+    - name: docker:27.5-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - docker build --pull -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+deploy-adapter:
+  image:
+    name: alpine/helm:3.17.3
+    entrypoint: [""]
+  stage: deploy
+  resource_group: litellm-config-adapter-${DEPLOY_NAMESPACE}
+  environment:
+    name: production
+  script:
+    - test -n "$KUBE_CONTEXT"
+    - helm version
+    - |
+      if [ -n "${ADAPTER_VALUES_FILE:-}" ]; then
+        helm upgrade --install "$HELM_RELEASE_NAME" ./charts/litellm-config-adapter \
+          --kube-context "$KUBE_CONTEXT" \
+          --namespace "$DEPLOY_NAMESPACE" \
+          --create-namespace \
+          --set-string image.repository="$CI_REGISTRY_IMAGE" \
+          --set-string image.tag="$CI_COMMIT_SHA" \
+          -f "$ADAPTER_VALUES_FILE" \
+          --atomic --wait --timeout 10m
+      else
+        helm upgrade --install "$HELM_RELEASE_NAME" ./charts/litellm-config-adapter \
+          --kube-context "$KUBE_CONTEXT" \
+          --namespace "$DEPLOY_NAMESPACE" \
+          --create-namespace \
+          --set-string image.repository="$CI_REGISTRY_IMAGE" \
+          --set-string image.tag="$CI_COMMIT_SHA" \
+          --atomic --wait --timeout 10m
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

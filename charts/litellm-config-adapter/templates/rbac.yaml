@@ -3,15 +3,17 @@ kind: Role
 metadata:
   name: {{ include "adapter.fullname" . }}
 rules:
+  {{- if not .Values.discovery.clusterWide }}
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create", "update"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
+  {{- end }}
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     resourceNames: [{{ .Values.litellm.deploymentName | quote }}]
@@ -28,3 +30,30 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "adapter.fullname" . }}
+{{- if .Values.discovery.clusterWide }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "adapter.fullname" . }}-{{ .Release.Namespace }}-discovery
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "adapter.fullname" . }}-{{ .Release.Namespace }}-discovery
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "adapter.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "adapter.fullname" . }}-{{ .Release.Namespace }}-discovery
+{{- end }}

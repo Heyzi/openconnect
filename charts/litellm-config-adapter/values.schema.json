@@ -1,18 +1,111 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "replicaCount",
+    "image",
+    "configMap",
+    "baseConfigMap",
+    "baseConfig",
+    "litellm",
+    "discovery",
+    "healthChecks",
+    "resources",
+    "podSecurityContext",
+    "securityContext"
+  ],
   "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "const": 1,
+      "description": "Only one replica is supported because the adapter is a single writer without leader election."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "configMap": {
+      "$ref": "#/definitions/configMapReference"
+    },
     "baseConfig": {
       "type": "object",
       "not": { "required": ["model_list"] }
     },
     "baseConfigMap": {
+      "allOf": [
+        { "$ref": "#/definitions/configMapReference" },
+        {
+          "type": "object",
+          "required": ["create"],
+          "properties": {
+            "create": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "litellm": {
       "type": "object",
-      "required": ["create", "name", "key"],
+      "additionalProperties": false,
+      "required": ["deploymentName"],
       "properties": {
-        "create": { "type": "boolean" },
+        "deploymentName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clusterWide"],
+      "properties": {
+        "clusterWide": { "type": "boolean" }
+      }
+    },
+    "healthChecks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeout", "successThreshold", "unhealthyGracePeriod"],
+      "properties": {
+        "timeout": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m)$" },
+        "successThreshold": { "type": "integer", "minimum": 1 },
+        "unhealthyGracePeriod": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    }
+  },
+  "definitions": {
+    "configMapReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "key"],
+      "properties": {
         "name": { "type": "string", "minLength": 1 },
-        "key": { "type": "string", "minLength": 1 }
+        "key": { "type": "string", "minLength": 1 },
+        "create": { "type": "boolean" }
       }
     }
   }

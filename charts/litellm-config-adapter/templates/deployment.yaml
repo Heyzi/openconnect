@@ -6,6 +6,8 @@ metadata:
     {{- include "adapter.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "adapter.name" . }}
@@ -16,6 +18,9 @@ spec:
         {{- include "adapter.labels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "adapter.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: adapter
@@ -27,6 +32,10 @@ spec:
             - --configmap={{ .Values.configMap.name }}
             - --config-key={{ .Values.configMap.key }}
             - --deployment={{ .Values.litellm.deploymentName }}
+            - --cluster-wide-discovery={{ .Values.discovery.clusterWide }}
+            - --health-timeout={{ .Values.healthChecks.timeout }}
+            - --health-success-threshold={{ .Values.healthChecks.successThreshold }}
+            - --unhealthy-grace-period={{ .Values.healthChecks.unhealthyGracePeriod }}
           env:
             - name: POD_NAMESPACE
               valueFrom:

@@ -5,34 +5,27 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestGenerateIncludesOnlyReadyAndIsDeterministic(t *testing.T) {
-	services := []corev1.Service{
-		svc("z-service", "z-model", "1", 8000),
-		svc("a-service", "a-model", "2", 9000),
-		svc("not-ready", "hidden", "1", 7000),
+func TestGenerateIsDeterministic(t *testing.T) {
+	discovered := []DiscoveredModel{
+		{Name: "z-model", UpstreamModel: "upstream-z", APIBase: "http://z-service.test.svc.cluster.local:8000/v1", SourceService: "test/z-service"},
+		{Name: "a-model", UpstreamModel: "upstream-a", APIBase: "http://a-service.test.svc.cluster.local:9000/v1", SourceService: "test/a-service"},
 	}
-	yes := true
-	slices := []discoveryv1.EndpointSlice{
-		{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{discoveryv1.LabelServiceName: "z-service"}}, Endpoints: []discoveryv1.Endpoint{{Conditions: discoveryv1.EndpointConditions{Ready: &yes}}}},
-		{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{discoveryv1.LabelServiceName: "a-service"}}, Endpoints: []discoveryv1.Endpoint{{}}},
-	}
-	data, checksum, err := Generate([]byte("general_settings:\n  master_key: os.environ/PROXY_MASTER_KEY\n"), services, slices)
+	data, checksum, err := Generate([]byte("general_settings:\n  master_key: os.environ/PROXY_MASTER_KEY\n"), discovered)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(data)
-	if strings.Contains(got, "hidden") {
-		t.Fatalf("unready model was published:\n%s", got)
-	}
 	if strings.Index(got, "a-model") > strings.Index(got, "z-model") {
 		t.Fatalf("models are not sorted:\n%s", got)
 	}
 	if !strings.Contains(got, "http://a-service.test.svc.cluster.local:9000/v1") {
 		t.Fatalf("unexpected api_base:\n%s", got)
+	}
+	if !strings.Contains(got, "model: openai/upstream-a") {
+		t.Fatalf("upstream vLLM model id was not preserved:\n%s", got)
 	}
 	if !strings.Contains(got, "master_key: os.environ/PROXY_MASTER_KEY") {
 		t.Fatalf("base config was not preserved:\n%s", got)
@@ -43,16 +36,18 @@ func TestGenerateIncludesOnlyReadyAndIsDeterministic(t *testing.T) {
 }
 
 func TestGenerateRejectsDuplicateModel(t *testing.T) {
-	services := []corev1.Service{svc("one", "model", "1", 8000), svc("two", "model", "2", 8000)}
-	slices := []discoveryv1.EndpointSlice{readySlice("one"), readySlice("two")}
-	_, _, err := Generate(nil, services, slices)
+	discovered := []DiscoveredModel{
+		{Name: "model", UpstreamModel: "one", APIBase: "http://one/v1", SourceService: "test/one"},
+		{Name: "model", UpstreamModel: "two", APIBase: "http://two/v1", SourceService: "test/two"},
+	}
+	_, _, err := Generate(nil, discovered)
 	if err == nil || !strings.Contains(err.Error(), "duplicate model") {
 		t.Fatalf("expected duplicate error, got %v", err)
 	}
 }
 
 func TestGenerateEmptyConfig(t *testing.T) {
-	data, _, err := Generate([]byte("litellm_settings:\n  cache: true\n"), nil, nil)
+	data, _, err := Generate([]byte("litellm_settings:\n  cache: true\n"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,22 +57,30 @@ func TestGenerateEmptyConfig(t *testing.T) {
 }
 
 func TestGenerateRejectsModelListInBase(t *testing.T) {
-	_, _, err := Generate([]byte("model_list: []\n"), nil, nil)
+	_, _, err := Generate([]byte("model_list: []\n"), nil)
 	if err == nil || !strings.Contains(err.Error(), "must not contain model_list") {
 		t.Fatalf("expected ownership error, got %v", err)
 	}
 }
 
 func TestGenerateRejectsInvalidBaseYAML(t *testing.T) {
-	_, _, err := Generate([]byte("settings: [\n"), nil, nil)
+	_, _, err := Generate([]byte("settings: [\n"), nil)
 	if err == nil || !strings.Contains(err.Error(), "parse base config") {
 		t.Fatalf("expected YAML error, got %v", err)
 	}
 }
 
-func svc(serviceName, modelName, version string, port int32) corev1.Service {
-	return corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: "test", Labels: map[string]string{DiscoveryLabel: "litellm", NameLabel: modelName, VersionLabel: version}}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: port}}}}
-}
-func readySlice(serviceName string) discoveryv1.EndpointSlice {
-	return discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{discoveryv1.LabelServiceName: serviceName}}, Endpoints: []discoveryv1.Endpoint{{}}}
+func TestServiceEndpointRequiresNamedVLLMPort(t *testing.T) {
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "vllm", Namespace: "test"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "metrics", Port: 9090}, {Name: APIPortName, Port: 8000}}}}
+	endpoint, err := ServiceEndpoint(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "http://vllm.test.svc.cluster.local:8000" {
+		t.Fatalf("unexpected endpoint %q", endpoint)
+	}
+	svc.Spec.Ports = []corev1.ServicePort{{Name: "http", Port: 8000}}
+	if _, err := ServiceEndpoint(svc); err == nil || !strings.Contains(err.Error(), APIPortName) {
+		t.Fatalf("expected missing named port error, got %v", err)
+	}
 }

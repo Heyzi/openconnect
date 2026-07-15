@@ -1,9 +1,12 @@
+# The adapter intentionally has a single writer and does not use leader election.
 replicaCount: 1
 
 image:
   repository: registry.example.com/litellm-config-adapter
   tag: "0.1.0"
   pullPolicy: IfNotPresent
+
+imagePullSecrets: []
 
 configMap:
   name: litellm-generated-config
@@ -18,9 +21,19 @@ baseConfigMap:
 baseConfig:
   litellm_settings:
     cache: true
+    success_callback:
+      - prometheus
 
 litellm:
   deploymentName: litellm
+
+discovery:
+  clusterWide: false
+
+healthChecks:
+  timeout: 5s
+  successThreshold: 2
+  unhealthyGracePeriod: 2m
 
 resources:
   requests:
