@@ -33,6 +33,14 @@ type Options struct {
 	UnhealthyGracePeriod                                                                  time.Duration
 }
 
+type serviceLister interface {
+	List(labels.Selector) ([]*corev1.Service, error)
+}
+
+type endpointSliceLister interface {
+	List(labels.Selector) ([]*discoveryv1.EndpointSlice, error)
+}
+
 func Run(o Options, client kubernetes.Interface) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -91,19 +99,11 @@ func Run(o Options, client kubernetes.Interface) error {
 	}
 }
 
-func reconcile(ctx context.Context, o Options, client kubernetes.Interface, serviceLister interface {
-	List(selector labels.Selector) ([]*corev1.Service, error)
-}, sliceLister interface {
-	List(selector labels.Selector) ([]*discoveryv1.EndpointSlice, error)
-}) error {
-	return reconcileWithTracker(ctx, o, client, serviceLister, sliceLister, nil)
+func reconcile(ctx context.Context, o Options, client kubernetes.Interface, services serviceLister, slices endpointSliceLister) error {
+	return reconcileWithTracker(ctx, o, client, services, slices, nil)
 }
 
-func reconcileWithTracker(ctx context.Context, o Options, client kubernetes.Interface, serviceLister interface {
-	List(selector labels.Selector) ([]*corev1.Service, error)
-}, sliceLister interface {
-	List(selector labels.Selector) ([]*discoveryv1.EndpointSlice, error)
-}, tracker *discoveryTracker) error {
+func reconcileWithTracker(ctx context.Context, o Options, client kubernetes.Interface, serviceLister serviceLister, sliceLister endpointSliceLister, tracker *discoveryTracker) error {
 	base, err := client.CoreV1().ConfigMaps(o.Namespace).Get(ctx, o.BaseConfigMapName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("read base ConfigMap %s/%s: %w", o.Namespace, o.BaseConfigMapName, err)
@@ -120,14 +120,6 @@ func reconcileWithTracker(ctx context.Context, o Options, client kubernetes.Inte
 	if err != nil {
 		return fmt.Errorf("list EndpointSlices: %w", err)
 	}
-	services := make([]corev1.Service, len(servicePtrs))
-	for i := range servicePtrs {
-		services[i] = *servicePtrs[i]
-	}
-	slices := make([]discoveryv1.EndpointSlice, len(slicePtrs))
-	for i := range slicePtrs {
-		slices[i] = *slicePtrs[i]
-	}
 	cmClient := client.CoreV1().ConfigMaps(o.Namespace)
 	cm, cmErr := cmClient.Get(ctx, o.ConfigMapName, metav1.GetOptions{})
 	if cmErr != nil && !apierrors.IsNotFound(cmErr) {
@@ -140,7 +132,7 @@ func reconcileWithTracker(ctx context.Context, o Options, client kubernetes.Inte
 			current = cm.Data[o.ConfigKey]
 		}
 		var pending bool
-		discovered, pending, err = tracker.Filter(ctx, services, slices, current)
+		discovered, pending, err = tracker.Filter(ctx, servicePtrs, slicePtrs, current)
 		if err != nil {
 			return fmt.Errorf("validate discovered models (last valid config retained): %w", err)
 		}
@@ -173,14 +165,14 @@ func reconcileWithTracker(ctx context.Context, o Options, client kubernetes.Inte
 		return fmt.Errorf("read LiteLLM Deployment: %w", err)
 	}
 	if deployment.Spec.Template.Annotations[checksumAnnotation] == checksum && hasSafeRollingUpdate(deployment.Spec.Strategy) {
-		slog.Debug("LiteLLM config is already loaded", "checksum", checksum, "services", len(services))
+		slog.Debug("LiteLLM config is already loaded", "checksum", checksum, "services", len(servicePtrs))
 		return nil
 	}
 	patch := []byte(fmt.Sprintf(`{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":0,"maxSurge":1}},"template":{"metadata":{"annotations":{"%s":"%s"}}}}}`, checksumAnnotation, checksum))
 	if _, err := client.AppsV1().Deployments(o.Namespace).Patch(ctx, o.DeploymentName, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 		return fmt.Errorf("patch LiteLLM Deployment: %w", err)
 	}
-	slog.Info("LiteLLM config reconciled", "checksum", checksum, "services", len(services))
+	slog.Info("LiteLLM config reconciled", "checksum", checksum, "services", len(servicePtrs))
 	return nil
 }
 

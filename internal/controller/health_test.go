@@ -42,8 +42,8 @@ func TestDiscoveryTrackerStabilizesAdditionAndTemporaryFailure(t *testing.T) {
 	tracker := newDiscoveryTracker(checker, 2, 2*time.Minute)
 	now := time.Unix(1000, 0)
 	tracker.now = func() time.Time { return now }
-	services := []corev1.Service{trackedService()}
-	slices := []discoveryv1.EndpointSlice{trackedReadySlice()}
+	services := []*corev1.Service{ptrService(trackedService())}
+	slices := []*discoveryv1.EndpointSlice{ptrSlice(trackedReadySlice())}
 
 	filtered, pending, err := tracker.Filter(context.Background(), services, slices, "")
 	if err != nil {
@@ -78,7 +78,7 @@ func TestDiscoveryTrackerBootstrapsPublishedStateAndDeletesExplicitly(t *testing
 	tracker := newDiscoveryTracker(checker, 2, 2*time.Minute)
 	tracker.now = func() time.Time { return time.Unix(1000, 0) }
 	generated := "model_list:\n  - model_name: org/model\n    litellm_params:\n      model: openai/org/model\n      api_base: http://vllm.test.svc.cluster.local:8000/v1\n    model_info:\n      source_service: test/vllm\n"
-	filtered, pending, err := tracker.Filter(context.Background(), []corev1.Service{trackedService()}, []discoveryv1.EndpointSlice{trackedReadySlice()}, generated)
+	filtered, pending, err := tracker.Filter(context.Background(), []*corev1.Service{ptrService(trackedService())}, []*discoveryv1.EndpointSlice{ptrSlice(trackedReadySlice())}, generated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +97,8 @@ func TestDiscoveryTrackerBootstrapsPublishedStateAndDeletesExplicitly(t *testing
 func TestDiscoveryTrackerStabilizesChangedModelSet(t *testing.T) {
 	checker := &fakeHealthChecker{healthy: true, models: []string{"base"}}
 	tracker := newDiscoveryTracker(checker, 2, time.Minute)
-	services := []corev1.Service{trackedService()}
-	slices := []discoveryv1.EndpointSlice{trackedReadySlice()}
+	services := []*corev1.Service{ptrService(trackedService())}
+	slices := []*discoveryv1.EndpointSlice{ptrSlice(trackedReadySlice())}
 	_, _, _ = tracker.Filter(context.Background(), services, slices, "")
 	models, _, _ := tracker.Filter(context.Background(), services, slices, "")
 	if len(models) != 1 || models[0].Name != "base" {
@@ -127,7 +127,7 @@ func TestDiscoveryTrackerMatchesEndpointSlicesByNamespace(t *testing.T) {
 	sliceA := trackedReadySlice()
 	sliceA.Namespace = "team-a"
 
-	models, _, err := tracker.Filter(context.Background(), []corev1.Service{serviceA, serviceB}, []discoveryv1.EndpointSlice{sliceA}, "")
+	models, _, err := tracker.Filter(context.Background(), []*corev1.Service{&serviceA, &serviceB}, []*discoveryv1.EndpointSlice{&sliceA}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestDiscoveryTrackerMatchesEndpointSlicesByNamespace(t *testing.T) {
 
 	sliceB := trackedReadySlice()
 	sliceB.Namespace = "team-b"
-	models, _, err = tracker.Filter(context.Background(), []corev1.Service{serviceA, serviceB}, []discoveryv1.EndpointSlice{sliceA, sliceB}, "")
+	models, _, err = tracker.Filter(context.Background(), []*corev1.Service{&serviceA, &serviceB}, []*discoveryv1.EndpointSlice{&sliceA, &sliceB}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,6 +188,8 @@ func TestHTTPHealthCheckerUsesVLLMModelsAsSourceOfTruth(t *testing.T) {
 }
 
 func ptrService(svc corev1.Service) *corev1.Service { return &svc }
+
+func ptrSlice(slice discoveryv1.EndpointSlice) *discoveryv1.EndpointSlice { return &slice }
 
 func trackedService() corev1.Service {
 	return corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "vllm", Namespace: "test", Labels: map[string]string{adapterconfig.DiscoveryLabel: "litellm"}}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: adapterconfig.APIPortName, Port: 8000}}}}

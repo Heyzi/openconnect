@@ -102,7 +102,9 @@ strategy:
     maxUnavailable: 0
     maxSurge: 1
 
-terminationGracePeriodSeconds: 90
+# После SIGTERM Kubernetes даёт LiteLLM до 30 минут на завершение
+# активных запросов перед принудительной остановкой.
+terminationGracePeriodSeconds: 1800
 
 pdb:
   enabled: true

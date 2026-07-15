@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -89,26 +88,6 @@ func ServiceEndpoint(svc *corev1.Service) (string, error) {
 		return "", fmt.Errorf("Service %s/%s: unsupported scheme %q", svc.Namespace, svc.Name, scheme)
 	}
 	return ServiceURL(svc, scheme, port), nil
-}
-
-func HasReadyEndpoint(namespace, serviceName string, slices []discoveryv1.EndpointSlice) bool {
-	return readyServices(slices)[namespace+"/"+serviceName]
-}
-
-func readyServices(slices []discoveryv1.EndpointSlice) map[string]bool {
-	result := map[string]bool{}
-	for i := range slices {
-		name := slices[i].Labels[discoveryv1.LabelServiceName]
-		key := slices[i].Namespace + "/" + name
-		for _, endpoint := range slices[i].Endpoints {
-			// nil means "unknown" and is treated as ready by Kubernetes clients.
-			if endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready {
-				result[key] = true
-				break
-			}
-		}
-	}
-	return result
 }
 
 func servicePort(svc *corev1.Service) (int32, error) {

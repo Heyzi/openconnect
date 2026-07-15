@@ -105,12 +105,12 @@ func newDiscoveryTracker(checker serviceHealthChecker, successThreshold int, unh
 
 // Filter returns the stable model set. A changed /v1/models response must be
 // observed successThreshold times before it replaces the published set.
-func (t *discoveryTracker) Filter(ctx context.Context, services []corev1.Service, slices []discoveryv1.EndpointSlice, generatedConfig string) (models []adapterconfig.DiscoveredModel, pending bool, err error) {
+func (t *discoveryTracker) Filter(ctx context.Context, services []*corev1.Service, slices []*discoveryv1.EndpointSlice, generatedConfig string) (models []adapterconfig.DiscoveredModel, pending bool, err error) {
 	now := t.now()
 	previouslyPublished := modelsByService(generatedConfig)
+	ready := readyServices(slices)
 	present := make(map[string]bool, len(services))
-	for i := range services {
-		svc := &services[i]
+	for _, svc := range services {
 		key := svc.Namespace + "/" + svc.Name
 		present[key] = true
 		state := t.states[key]
@@ -127,7 +127,7 @@ func (t *discoveryTracker) Filter(ctx context.Context, services []corev1.Service
 		}
 		var ids []string
 		var healthErr error
-		if adapterconfig.HasReadyEndpoint(svc.Namespace, svc.Name, slices) {
+		if ready[key] {
 			ids, healthErr = t.checker.Check(ctx, svc)
 		} else {
 			healthErr = fmt.Errorf("no ready EndpointSlice endpoint")
@@ -167,6 +167,24 @@ func (t *discoveryTracker) Filter(ctx context.Context, services []corev1.Service
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
 	return models, pending, nil
+}
+
+func readyServices(slices []*discoveryv1.EndpointSlice) map[string]bool {
+	result := make(map[string]bool, len(slices))
+	for _, slice := range slices {
+		serviceName := slice.Labels[discoveryv1.LabelServiceName]
+		if serviceName == "" {
+			continue
+		}
+		for _, endpoint := range slice.Endpoints {
+			// nil means "unknown" and is treated as ready by Kubernetes clients.
+			if endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready {
+				result[slice.Namespace+"/"+serviceName] = true
+				break
+			}
+		}
+	}
+	return result
 }
 
 func discoveredModels(svc *corev1.Service, ids []string) ([]adapterconfig.DiscoveredModel, error) {
