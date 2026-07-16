@@ -1,0 +1,362 @@
+[
+  {
+    "time": "2026-07-16T08:55:03.984155Z",
+    "level": "Info",
+    "component": "Desktop Agent",
+    "message": "portal listening on loopback"
+  },
+  {
+    "time": "2026-07-16T08:57:22.337962Z",
+    "level": "Info",
+    "component": "Connectivity",
+    "message": "VPN server is reachable"
+  },
+  {
+    "time": "2026-07-16T08:57:22.348344Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "root helper started connection"
+  },
+  {
+    "time": "2026-07-16T08:57:22.952626Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "POST https://ras3.sberdevices.ru/"
+  },
+  {
+    "time": "2026-07-16T08:57:22.952786Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Attempting to connect to server 95.181.183.27:443"
+  },
+  {
+    "time": "2026-07-16T08:57:22.952826Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Connected to 95.181.183.27:443"
+  },
+  {
+    "time": "2026-07-16T08:57:23.153908Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "SSL negotiation with ras3.sberdevices.ru"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154032Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Connected to HTTPS on ras3.sberdevices.ru with ciphersuite (TLS1.2)-(ECDHE-SECP256R1)-(RSA-SHA256)-(AES-256-GCM)"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154524Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e POST / HTTP/1.1"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154546Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Host: ras3.sberdevices.ru"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154561Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e User-Agent: Open AnyConnect VPN Agent"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154581Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Accept: */*"
+  },
+  {
+    "time": "2026-07-16T08:57:23.15459Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Accept-Encoding: identity"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154643Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Transcend-Version: 1"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154656Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Aggregate-Auth: 1"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154668Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Support-HTTP-Auth: true"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154683Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-AnyConnect-STRAP-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7oDJRd82mpfNUxQFbg8uASQEKNza7NsbvqHkyHxn/NDTfrjqVo5/0dansIH18Oe6CxWCuQYbr77/0TFYMt3Snw=="
+  },
+  {
+    "time": "2026-07-16T08:57:23.154832Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-AnyConnect-STRAP-DH-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5RzqcFgM1fv5eXNZtWUun1qnX8kEfrfxVa5SJ3crPDF+GJwAeqRrKTYK0vV/E2hFspH/fA3OtZKNb+fw6sI0GQ=="
+  },
+  {
+    "time": "2026-07-16T08:57:23.154987Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Pad: 00000000"
+  },
+  {
+    "time": "2026-07-16T08:57:23.154999Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Content-Type: application/xml; charset=utf-8"
+  },
+  {
+    "time": "2026-07-16T08:57:23.155109Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Content-Length: 632"
+  },
+  {
+    "time": "2026-07-16T08:57:23.155141Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.155144Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e \u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.155196Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e \u003cconfig-auth client=\"vpn\" type=\"init\" aggregate-auth-version=\"2\"\u003e\u003cversion who=\"vpn\"\u003ev9.21-6-g233aad38\u003c/version\u003e\u003cdevice-id device-type=\"MacBookAir10,1\" unique-id=\"E7E075DBADF05E04BD51F4022DA4F0DAFD0D1CBED381DE05DEAD371F07758362\" unique-id-global=\"DDC9776625A8ACDC23B33791DEDFC456F5410DB7\"\u003emac-intel\u003c/device-id\u003e\u003cmac-address-list\u003e\u003cmac-address\u003e74:13:ea:5a:3c:69\u003c/mac-address\u003e\u003c/mac-address-list\u003e\u003ccapabilities\u003e\u003cauth-method\u003esingle-sign-on-v2\u003c/auth-method\u003e\u003cauth-method\u003esingle-sign-on-external-browser\u003c/auth-method\u003e\u003c/capabilities\u003e\u003cgroup-access\u003ehttps://ras3.sberdevices.ru/\u003c/group-access\u003e\u003c/config-auth\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156192Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Got HTTP response: HTTP/1.1 200 OK"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156211Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Set-Cookie: [REDACTED] expires=Thu, 01 Jan 1970 22:00:00 GMT; path=/; Secure; HttpOnly"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156283Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Content-Type: text/xml"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156296Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Content-Length: 379"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156322Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "X-Transcend-Version: 1"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156355Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "HTTP body length:  (379)"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156368Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156388Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003cconfig-auth client=\"vpn\" type=\"auth-request\"\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156412Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003cversion who=\"sg\"\u003e0.1(1)\u003c/version\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156446Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003cauth id=\"main\"\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156507Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003cmessage\u003ePlease enter your username and password.\u003c/message\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156546Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003cform method=\"post\" action=\"/auth\"\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156594Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003cinput type=\"text\" name=\"username\" label=\"Username:\" /\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156614Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003cinput type=\"password\" name=\"password\" label=\"Password:[REDACTED] /\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.156919Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003c/form\u003e\u003c/auth\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157225Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003c \u003c/config-auth\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157237Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "XML POST enabled"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157246Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "Please enter your username and password."
+  },
+  {
+    "time": "2026-07-16T08:57:23.157262Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "POST https://ras3.sberdevices.ru/auth"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157466Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e POST /auth HTTP/1.1"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157475Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Host: ras3.sberdevices.ru"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157606Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e User-Agent: Open AnyConnect VPN Agent"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157642Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Accept: */*"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157648Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Accept-Encoding: identity"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157676Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Transcend-Version: 1"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157686Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Aggregate-Auth: 1"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157782Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Support-HTTP-Auth: true"
+  },
+  {
+    "time": "2026-07-16T08:57:23.157797Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-AnyConnect-STRAP-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7oDJRd82mpfNUxQFbg8uASQEKNza7NsbvqHkyHxn/NDTfrjqVo5/0dansIH18Oe6CxWCuQYbr77/0TFYMt3Snw=="
+  },
+  {
+    "time": "2026-07-16T08:57:23.158055Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-AnyConnect-STRAP-DH-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5RzqcFgM1fv5eXNZtWUun1qnX8kEfrfxVa5SJ3crPDF+GJwAeqRrKTYK0vV/E2hFspH/fA3OtZKNb+fw6sI0GQ=="
+  },
+  {
+    "time": "2026-07-16T08:57:23.158108Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e X-Pad: 000000000000000000000000000000000000000000"
+  },
+  {
+    "time": "2026-07-16T08:57:23.158127Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Content-Type: application/xml; charset=utf-8"
+  },
+  {
+    "time": "2026-07-16T08:57:23.15829Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e Content-Length: 662"
+  },
+  {
+    "time": "2026-07-16T08:57:23.158298Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.158299Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e \u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.158314Z",
+    "level": "Info",
+    "component": "OpenConnect",
+    "message": "\u003e \u003cconfig-auth client=\"vpn\" type=\"auth-reply\" aggregate-auth-version=\"2\"\u003e\u003cversion who=\"vpn\"\u003ev9.21-6-g233aad38\u003c/version\u003e\u003cdevice-id device-type=\"MacBookAir10,1\" unique-id=\"E7E075DBADF05E04BD51F4022DA4F0DAFD0D1CBED381DE05DEAD371F07758362\" unique-id-global=\"DDC9776625A8ACDC23B33791DEDFC456F5410DB7\"\u003emac-intel\u003c/device-id\u003e\u003cmac-address-list\u003e\u003cmac-address\u003e74:13:ea:5a:3c:69\u003c/mac-address\u003e\u003c/mac-address-list\u003e\u003ccapabilities\u003e\u003cauth-method\u003esingle-sign-on-v2\u003c/auth-method\u003e\u003cauth-method\u003esingle-sign-on-external-browser\u003c/auth-method\u003e\u003c/capabilities\u003e\u003cauth\u003e\u003cusername\u003eavgerasimov\u003c/username\u003e\u003cpassword\u003eGznmltczngznm%%\u003c/password\u003e\u003c/auth\u003e\u003c/config-auth\u003e"
+  },
+  {
+    "time": "2026-07-16T08:57:23.349437Z",
+    "level": "Error",
+    "component": "OpenConnect",
+    "message": "OpenConnect exited unexpectedly: exit status 1"
+  }
+]

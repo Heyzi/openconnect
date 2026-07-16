@@ -41,6 +41,26 @@ func TestUnexpectedOpenConnectExitChangesConnectedStatusToError(t *testing.T) {
 	t.Fatalf("status did not change to error: %#v", manager.Status())
 }
 
+func TestLogWatcherFlushesFinalLineAfterProcessExit(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "openconnect.log")
+	if err := os.WriteFile(logPath, []byte("first line\nfinal error without newline"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	logs := logging.New(20)
+	manager := NewWithClient(privileged.Client{}, "", logs, network.NewStore())
+	manager.logPath = logPath
+	start := time.Now().UTC()
+	manager.status = Status{State: "error", StartedAt: &start}
+
+	manager.watchLog(start)
+
+	entries := logs.Entries()
+	if len(entries) != 2 || entries[0].Message != "first line" || entries[1].Message != "final error without newline" {
+		t.Fatalf("entries = %#v", entries)
+	}
+}
+
 func TestProcessWatcherIgnoresTransientHelperFailure(t *testing.T) {
 	calls := 0
 	running := true

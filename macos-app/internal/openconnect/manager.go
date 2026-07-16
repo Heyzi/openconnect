@@ -162,22 +162,33 @@ func (m *Manager) watchLog(start time.Time) {
 		active := m.status.StartedAt != nil && m.status.StartedAt.Equal(start) &&
 			(m.status.State == "connecting" || m.status.State == "connected" || m.status.State == "disconnecting")
 		m.mu.RUnlock()
+		offset, remainder = m.readLog(offset, remainder, !active)
 		if !active {
 			return
 		}
-		if data, err := os.ReadFile(m.logPath); err == nil && len(data) >= offset {
-			chunk := remainder + string(data[offset:])
-			offset = len(data)
-			lines := strings.Split(chunk, "\n")
-			remainder = lines[len(lines)-1]
-			for _, line := range lines[:len(lines)-1] {
-				if strings.TrimSpace(line) != "" {
-					m.logs.Add("Info", "OpenConnect", line)
-				}
-			}
-		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+func (m *Manager) readLog(offset int, remainder string, flush bool) (int, string) {
+	data, err := os.ReadFile(m.logPath)
+	if err != nil || len(data) < offset {
+		return offset, remainder
+	}
+	chunk := remainder + string(data[offset:])
+	offset = len(data)
+	lines := strings.Split(chunk, "\n")
+	remainder = lines[len(lines)-1]
+	for _, line := range lines[:len(lines)-1] {
+		if strings.TrimSpace(line) != "" {
+			m.logs.Add("Info", "OpenConnect", line)
+		}
+	}
+	if flush && strings.TrimSpace(remainder) != "" {
+		m.logs.Add("Info", "OpenConnect", remainder)
+		remainder = ""
+	}
+	return offset, remainder
 }
 func (m *Manager) waitForApplied(start time.Time, profile profiles.Profile) {
 	deadline := time.Now().Add(60 * time.Second)

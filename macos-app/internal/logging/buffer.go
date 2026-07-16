@@ -21,13 +21,15 @@ type Buffer struct {
 }
 
 var secrets = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(<(?:password|passwd|token|cookie|authorization|pin)\b[^>]*>)[^<]*(</(?:password|passwd|token|cookie|authorization|pin)\s*>)`),
 	regexp.MustCompile(`(?i)(password|passwd|token|cookie|authorization|pin)(\s*[:=]\s*)\S+`),
 	regexp.MustCompile(`(?i)-----BEGIN [^-]*PRIVATE KEY-----`),
 }
 
 func New(limit int) *Buffer { return &Buffer{limit: limit, subscribers: map[chan Entry]struct{}{}} }
 func redact(s string) string {
-	for _, re := range secrets {
+	s = secrets[0].ReplaceAllString(s, "$1[REDACTED]$2")
+	for _, re := range secrets[1:] {
 		s = re.ReplaceAllString(s, "$1$2[REDACTED]")
 	}
 	return strings.TrimSpace(s)

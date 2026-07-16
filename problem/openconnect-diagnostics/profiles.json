@@ -1,0 +1,20 @@
+{
+  "profiles": [
+    {
+      "id": "c2ab54e921acf9bef85a6cc3",
+      "name": "sberdevices",
+      "server": "https://ras3.sberdevices.ru",
+      "protocol": "anyconnect",
+      "username": "avgerasimov",
+      "verbose": true,
+      "macAddress": "74:13:ea:5a:3c:69",
+      "routeDeletions": [
+        "172.17.0.0/24",
+        "172.17.4.0/24",
+        "172.17.8.0/24",
+        "192.168.0.0/24"
+      ]
+    }
+  ],
+  "version": 1
+}
