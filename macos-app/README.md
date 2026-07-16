@@ -8,7 +8,7 @@ the upstream OpenConnect C build.
 
 - agent process with graceful shutdown;
 - random IPv4 loopback portal address;
-- one-time bootstrap URL, HttpOnly session cookie, CSRF, Host and Origin checks;
+- secret bootstrap URL with renewable HttpOnly session cookie, CSRF, Host and Origin checks;
 - embedded, offline web portal;
 - versioned profile storage with `0600` file permissions;
 - profile create/read/update/delete API;
@@ -32,7 +32,8 @@ the upstream OpenConnect C build.
 go run ./cmd/openconnect-desktop -openconnect /path/to/openconnect
 ```
 
-The bootstrap URL is printed once and opened in the default browser. The portal
+The bootstrap URL is printed on startup and opened in the default browser. The tray
+uses the same URL so it can restore the browser session after sleep or an agent restart. The portal
 requests both the account password and OTP for each connection. Both are passed
 to OpenConnect through stdin and immediately discarded. Fully dynamic auth
 forms (group selection, password changes, banners, and browser SAML) and the
@@ -43,20 +44,25 @@ root helper only after the real `vpnc-script` has successfully installed the
 server configuration. The helper never accepts arbitrary commands or arbitrary
 OpenConnect arguments.
 
-## Build an app bundle
+## Build a portable app bundle
 
-Build or provide a self-contained OpenConnect binary and `vpnc-script`, then:
+Build OpenConnect in the repository root, then run:
 
 ```sh
-OPENCONNECT_BINARY=/path/to/openconnect \
-VPNC_SCRIPT=/path/to/vpnc-script \
 ./packaging/build-app.sh
 ./packaging/build-dmg.sh
 ```
 
-The result is written to `dist/`. A distributable build must additionally copy
-and rewrite all dylib dependencies, include third-party notices, codesign every
-binary, enable hardened runtime, and be notarized.
+The DMG filename includes the source commit, for example
+`OpenConnect-Desktop-295e77b4cbd8.dmg`. Set `BUILD_COMMIT` explicitly when
+building from a source archive without Git metadata.
+
+The script embeds the real OpenConnect executable, `libopenconnect`,
+`vpnc-script`, and all non-system dylib dependencies in the application. It
+fails instead of producing an incomplete bundle when any required component is
+missing. Override `OPENCONNECT_BINARY`, `OPENCONNECT_LIBRARY`, or `VPNC_SCRIPT`
+to use non-default build artifacts. The result is written to `dist/`; public
+distribution still requires an Apple Developer ID signature and notarization.
 
 ## Security boundary
 

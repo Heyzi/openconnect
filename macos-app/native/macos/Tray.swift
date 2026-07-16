@@ -5,12 +5,16 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     private let portalURL: URL
     private let agentPID: Int32
     private let statusPath: String
+    private let buildCommit: String
     private var timer: Timer?
+    private var downloadItem: NSMenuItem!
+    private var uploadItem: NSMenuItem!
 
-    init(portalURL: URL, agentPID: Int32, statusPath: String) {
+    init(portalURL: URL, agentPID: Int32, statusPath: String, buildCommit: String) {
         self.portalURL = portalURL
         self.agentPID = agentPID
         self.statusPath = statusPath
+        self.buildCommit = buildCommit
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -24,6 +28,18 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         let title = NSMenuItem(title: "OpenConnect Desktop", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let versionItem = NSMenuItem(title: "Version \(version) · build \(buildCommit)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+        downloadItem = NSMenuItem(title: "Download —", action: nil, keyEquivalent: "")
+        downloadItem.isEnabled = false
+        downloadItem.isHidden = true
+        menu.addItem(downloadItem)
+        uploadItem = NSMenuItem(title: "Upload —", action: nil, keyEquivalent: "")
+        uploadItem.isEnabled = false
+        uploadItem.isHidden = true
+        menu.addItem(uploadItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Open Portal", action: #selector(openPortal), keyEquivalent: "o").target = self
         menu.addItem(.separator())
@@ -45,6 +61,23 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         switch state { case "connected": color = .systemGreen; case "connecting", "disconnecting": color = .systemOrange; case "error": color = .systemRed; default: color = .labelColor }
         statusItem.button?.image = statusIcon(color: color)
         statusItem.button?.toolTip = "OpenConnect Desktop — \(state)"
+        if let traffic = object["traffic"] as? [String: Any] {
+            let downloaded = (traffic["downloadBytes"] as? NSNumber)?.uint64Value ?? 0
+            let uploaded = (traffic["uploadBytes"] as? NSNumber)?.uint64Value ?? 0
+            let downloadRate = (traffic["downloadBytesPerSec"] as? NSNumber)?.uint64Value ?? 0
+            let uploadRate = (traffic["uploadBytesPerSec"] as? NSNumber)?.uint64Value ?? 0
+            downloadItem.title = "Download  \(formatBytes(downloaded)) · \(formatBytes(downloadRate))/s"
+            uploadItem.title = "Upload       \(formatBytes(uploaded)) · \(formatBytes(uploadRate))/s"
+            downloadItem.isHidden = false
+            uploadItem.isHidden = false
+        } else {
+            downloadItem.isHidden = true
+            uploadItem.isHidden = true
+        }
+    }
+
+    private func formatBytes(_ value: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: value), countStyle: .decimal)
     }
 
     private func statusIcon(color: NSColor) -> NSImage {
@@ -80,11 +113,11 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-guard CommandLine.arguments.count == 4,
+guard CommandLine.arguments.count == 5,
       let url = URL(string: CommandLine.arguments[1]),
       let pid = Int32(CommandLine.arguments[2]) else { exit(64) }
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
-let delegate = TrayDelegate(portalURL: url, agentPID: pid, statusPath: CommandLine.arguments[3])
+let delegate = TrayDelegate(portalURL: url, agentPID: pid, statusPath: CommandLine.arguments[3], buildCommit: CommandLine.arguments[4])
 app.delegate = delegate
 app.run()

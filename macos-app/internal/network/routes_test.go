@@ -51,3 +51,32 @@ func TestClearRemovesServerRoutesAndUserOverrides(t *testing.T) {
 		t.Fatalf("routes survived disconnect: %#v", routes)
 	}
 }
+
+func TestMarkOverlaps(t *testing.T) {
+	routes := []Route{
+		{CIDR: "10.0.0.0/8"},
+		{CIDR: "10.20.0.0/16"},
+		{CIDR: "192.168.0.0/16"},
+		{CIDR: "2001:db8::/32"},
+		{CIDR: "2001:db8:1::/48"},
+	}
+	MarkOverlaps(routes)
+	want := []bool{true, true, false, true, true}
+	for i := range routes {
+		if routes[i].Overlaps != want[i] {
+			t.Errorf("route %s overlap = %v, want %v", routes[i].CIDR, routes[i].Overlaps, want[i])
+		}
+	}
+}
+
+func TestListGroupsRoutesBySource(t *testing.T) {
+	s := NewStore()
+	s.AddServerWithSource("10.0.0.0/8", "server-exclude")
+	s.AddServerWithSource("192.168.0.0/16", "server-include")
+	s.AddServerWithSource("172.16.0.0/12", "server-exclude")
+
+	routes := s.List()
+	if routes[0].Source != "server-exclude" || routes[1].Source != "server-exclude" || routes[2].Source != "server-include" {
+		t.Fatalf("routes are not grouped by source: %#v", routes)
+	}
+}

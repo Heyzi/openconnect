@@ -1,17 +1,20 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"openconnect.local/desktop/internal/diagnostics"
@@ -32,7 +35,7 @@ type Server struct {
 	vpn                            *openconnect.Manager
 	logs                           *logging.Buffer
 	session, bootstrap, csrf, host string
-	used                           bool
+	buildCommit                    string
 	handler                        http.Handler
 }
 
@@ -43,8 +46,8 @@ func token() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
-func New(ps *profiles.Store, ns *network.Store, keys keychain.Store, vpn *openconnect.Manager, logs *logging.Buffer) *Server {
-	s := &Server{profiles: ps, network: ns, keychain: keys, vpn: vpn, logs: logs, session: token(), bootstrap: token(), csrf: token()}
+func New(ps *profiles.Store, ns *network.Store, keys keychain.Store, vpn *openconnect.Manager, logs *logging.Buffer, buildCommit string) *Server {
+	s := &Server{profiles: ps, network: ns, keychain: keys, vpn: vpn, logs: logs, session: token(), bootstrap: token(), csrf: token(), buildCommit: buildCommit}
 	mux := http.NewServeMux()
 	s.routes(mux)
 	s.handler = s.secure(mux)
@@ -93,7 +96,7 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("/api/v1/events", method("GET", s.events))
 	m.HandleFunc("/api/v1/routes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
-			writeJSON(w, 200, s.network.List())
+			s.listRoutes(w, r)
 		} else if r.Method == "POST" {
 			s.addRoute(w, r)
 		} else {
@@ -113,6 +116,27 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("/api/v1/diagnostics", method("POST", s.diagnostics))
 	web, _ := fs.Sub(assets, "web")
 	m.Handle("/", http.FileServer(http.FS(web)))
+}
+
+func (s *Server) listRoutes(w http.ResponseWriter, r *http.Request) {
+	routes := s.network.List()
+	profile, ok := s.profiles.Get(r.URL.Query().Get("profileId"))
+	if !ok {
+		network.MarkOverlaps(routes)
+		writeJSON(w, http.StatusOK, routes)
+		return
+	}
+	present := make(map[string]bool, len(routes))
+	for _, route := range routes {
+		present[route.CIDR] = true
+	}
+	for _, cidr := range profile.RouteAdditions {
+		if !present[cidr] {
+			routes = append(routes, network.Route{CIDR: cidr, Source: "saved"})
+		}
+	}
+	network.MarkOverlaps(routes)
+	writeJSON(w, http.StatusOK, routes)
 }
 
 func routeID(r *http.Request) string { return strings.TrimPrefix(r.URL.Path, "/api/v1/routes/") }
@@ -314,24 +338,15 @@ func (s *Server) secure(next http.Handler) http.Handler {
 }
 func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	validToken := subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(s.bootstrap)) == 1
-	if s.used {
-		cookie, err := r.Cookie("oc_session")
-		validSession := err == nil && subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(s.session)) == 1
-		if validToken && validSession {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
-			return
-		}
-	}
-	if s.used || !validToken {
+	if !validToken {
 		http.Error(w, "invalid bootstrap token", 403)
 		return
 	}
-	s.used = true
 	http.SetCookie(w, &http.Cookie{Name: "oc_session", Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 func (s *Server) sessionInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]string{"csrfToken": s.csrf})
+	writeJSON(w, 200, map[string]string{"csrfToken": s.csrf, "buildCommit": s.buildCommit})
 }
 func (s *Server) status(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.vpn.Status()) }
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
@@ -374,9 +389,9 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 202, s.vpn.Status())
 }
 func checkServerReachable(server string) error {
-	return checkServerReachableWithDial(server, net.DialTimeout)
+	return checkServerReachableWithNetwork(server, net.DefaultResolver.LookupHost, net.DialTimeout)
 }
-func checkServerReachableWithDial(server string, dial func(string, string, time.Duration) (net.Conn, error)) error {
+func checkServerReachableWithNetwork(server string, lookup func(context.Context, string) ([]string, error), dial func(string, string, time.Duration) (net.Conn, error)) error {
 	u, err := url.Parse(server)
 	if err != nil || u.Hostname() == "" {
 		return fmt.Errorf("invalid VPN server URL")
@@ -385,13 +400,33 @@ func checkServerReachableWithDial(server string, dial func(string, string, time.
 	if port == "" {
 		port = "443"
 	}
-	address := net.JoinHostPort(u.Hostname(), port)
-	conn, err := dial("tcp", address, 3*time.Second)
+	host := u.Hostname()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	addresses, err := lookup(ctx, host)
+	cancel()
 	if err != nil {
-		return fmt.Errorf("VPN server %s is unreachable: %w", address, err)
+		return fmt.Errorf("DNS lookup for VPN server %s failed: %w", host, err)
 	}
-	_ = conn.Close()
-	return nil
+	if len(addresses) == 0 {
+		return fmt.Errorf("DNS lookup for VPN server %s returned no addresses", host)
+	}
+	var dialErr error
+	for _, ip := range addresses {
+		conn, connectErr := dial("tcp", net.JoinHostPort(ip, port), 3*time.Second)
+		if connectErr == nil {
+			_ = conn.Close()
+			return nil
+		}
+		dialErr = connectErr
+	}
+	endpoint := net.JoinHostPort(host, port)
+	if errors.Is(dialErr, syscall.ECONNREFUSED) {
+		return fmt.Errorf("TCP connection to VPN server %s was refused: %w", endpoint, dialErr)
+	}
+	if networkErr, ok := dialErr.(net.Error); ok && networkErr.Timeout() {
+		return fmt.Errorf("TCP connection to VPN server %s timed out: %w", endpoint, dialErr)
+	}
+	return fmt.Errorf("TCP connection to VPN server %s failed: %w", endpoint, dialErr)
 }
 func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
 	if err := s.vpn.Disconnect(); err != nil {

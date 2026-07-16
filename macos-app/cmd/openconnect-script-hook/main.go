@@ -25,11 +25,16 @@ type State struct {
 	ProxyPAC     string       `json:"proxyPAC,omitempty"`
 	Routes       []Route      `json:"routes"`
 	Proxies      []ProxyState `json:"proxies,omitempty"`
+	DNS          []DNSState   `json:"dns,omitempty"`
 }
 type ProxyState struct {
 	Service string `json:"service"`
 	URL     string `json:"url,omitempty"`
 	Enabled bool   `json:"enabled"`
+}
+type DNSState struct {
+	Service string   `json:"service"`
+	Servers []string `json:"servers,omitempty"`
 }
 
 func main() {
@@ -38,31 +43,52 @@ func main() {
 	if !filepath.IsAbs(script) || !filepath.IsAbs(statePath) {
 		fatal("hook paths must be absolute")
 	}
-	cmd := exec.Command(script)
 	reason := os.Getenv("reason")
 	var previous State
-	if reason == "disconnect" {
-		if b, readErr := os.ReadFile(statePath); readErr == nil {
-			_ = json.Unmarshal(b, &previous)
-		}
+	if b, readErr := os.ReadFile(statePath); readErr == nil {
+		_ = json.Unmarshal(b, &previous)
 	}
+	if os.Getenv("OPENCONNECT_RECOVER_ONLY") == "1" {
+		restoreSystemState(previous)
+		_ = os.Remove(statePath)
+		return
+	}
+	if reason != "disconnect" && reason != "pre-init" && previous.AppliedAt.IsZero() {
+		previous = State{AppliedAt: time.Now().UTC(), TunnelDevice: os.Getenv("TUNDEV"), DNS: snapshotDNS(), Proxies: snapshotProxies()}
+		writeState(statePath, previous)
+	}
+	cmd := exec.Command(script)
 	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if reason != "disconnect" && reason != "pre-init" {
+			restoreSystemState(previous)
+			_ = os.Remove(statePath)
+		}
 		fatal("vpnc-script failed: " + err.Error())
 	}
-	if reason == "disconnect" || reason == "pre-init" {
-		if reason == "disconnect" {
-			restoreProxies(previous.Proxies)
-		}
+	if reason == "disconnect" {
+		restoreSystemState(previous)
 		_ = os.Remove(statePath)
 		return
 	}
-	state := State{AppliedAt: time.Now().UTC(), Reason: reason, TunnelDevice: os.Getenv("TUNDEV"), Gateway: os.Getenv("VPNGATEWAY"), ProxyPAC: os.Getenv("CISCO_PROXY_PAC"), Routes: routes(), Proxies: snapshotProxies()}
+	if reason == "pre-init" {
+		return
+	}
+	state := runtimeState(previous, reason, os.Getenv("TUNDEV"), os.Getenv("VPNGATEWAY"), os.Getenv("CISCO_PROXY_PAC"), routes())
 	if !strings.HasPrefix(state.TunnelDevice, "utun") {
 		fatal("vpnc-script did not provide a valid utun device")
 	}
+	writeState(statePath, state)
+	if state.ProxyPAC != "" {
+		applyProxyPAC(state.Proxies, state.ProxyPAC)
+	}
+}
+func runtimeState(baseline State, reason, device, gateway, proxyPAC string, currentRoutes []Route) State {
+	return State{AppliedAt: baseline.AppliedAt, Reason: reason, TunnelDevice: device, Gateway: gateway, ProxyPAC: proxyPAC, Routes: currentRoutes, Proxies: baseline.Proxies, DNS: baseline.DNS}
+}
+func writeState(statePath string, state State) {
 	b, err := json.Marshal(state)
 	if err != nil {
 		fatal(err.Error())
@@ -76,9 +102,6 @@ func main() {
 	}
 	if uid, conversionErr := strconv.Atoi(os.Getenv("OPENCONNECT_OWNER_UID")); conversionErr == nil {
 		_ = os.Chown(statePath, uid, -1)
-	}
-	if state.ProxyPAC != "" {
-		applyProxyPAC(state.Proxies, state.ProxyPAC)
 	}
 }
 func routes() []Route {
@@ -148,5 +171,54 @@ func restoreProxies(states []ProxyState) {
 		}
 		_ = exec.Command("/usr/sbin/networksetup", "-setautoproxystate", state.Service, value).Run()
 	}
+}
+func snapshotDNS() []DNSState {
+	var out []DNSState
+	for _, service := range services() {
+		b, e := exec.Command("/usr/sbin/networksetup", "-getdnsservers", service).Output()
+		if e != nil {
+			continue
+		}
+		state := DNSState{Service: service, Servers: parseDNSServers(string(b))}
+		out = append(out, state)
+	}
+	return out
+}
+func parseDNSServers(output string) []string {
+	var servers []string
+	for _, line := range strings.Split(output, "\n") {
+		value := strings.TrimSpace(line)
+		if net.ParseIP(value) != nil {
+			servers = append(servers, value)
+		}
+	}
+	return servers
+}
+func restoreDNS(states []DNSState) {
+	for _, state := range states {
+		args := []string{"-setdnsservers", state.Service}
+		if len(state.Servers) == 0 {
+			args = append(args, "Empty")
+		} else {
+			args = append(args, state.Servers...)
+		}
+		_ = exec.Command("/usr/sbin/networksetup", args...).Run()
+	}
+}
+func removeTunnelDNS(device string) {
+	if !strings.HasPrefix(device, "utun") {
+		return
+	}
+	commands := "open\nremove State:/Network/Service/" + device + "/DNS\nremove State:/Network/Service/" + device + "/IPv4\nclose\n"
+	cmd := exec.Command("/usr/sbin/scutil")
+	cmd.Stdin = strings.NewReader(commands)
+	_ = cmd.Run()
+}
+func restoreSystemState(state State) {
+	restoreDNS(state.DNS)
+	restoreProxies(state.Proxies)
+	removeTunnelDNS(state.TunnelDevice)
+	_ = exec.Command("/usr/bin/dscacheutil", "-flushcache").Run()
+	_ = exec.Command("/usr/bin/killall", "-HUP", "mDNSResponder").Run()
 }
 func fatal(message string) { fmt.Fprintln(os.Stderr, message); os.Exit(1) }

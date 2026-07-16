@@ -43,7 +43,7 @@ version.c
 /openconnect.8
 /openconnect.pc
 
-openconnect
+/openconnect
 nm-openconnect-auth-dialog
 /list-system-keys
 /os-tcp-mtu

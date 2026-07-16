@@ -12,9 +12,10 @@ import (
 )
 
 type Route struct {
-	ID     string `json:"id"`
-	CIDR   string `json:"cidr"`
-	Source string `json:"source"`
+	ID       string `json:"id"`
+	CIDR     string `json:"cidr"`
+	Source   string `json:"source"`
+	Overlaps bool   `json:"overlaps,omitempty"`
 }
 
 type Store struct {
@@ -44,14 +45,43 @@ func canonical(cidr string) (string, error) {
 func (s *Store) List() []Route {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := append([]Route(nil), s.routes...)
+	out := append([]Route{}, s.routes...)
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Source == out[j].Source {
-			return out[i].CIDR < out[j].CIDR
+		iServer := strings.HasPrefix(out[i].Source, "server")
+		jServer := strings.HasPrefix(out[j].Source, "server")
+		if iServer != jServer {
+			return iServer
 		}
-		return strings.HasPrefix(out[i].Source, "server")
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		return out[i].CIDR < out[j].CIDR
 	})
 	return out
+}
+
+// MarkOverlaps marks every route that intersects at least one other route.
+// A contained subnet intersects its parent network, so both are marked.
+func MarkOverlaps(routes []Route) {
+	networks := make([]*net.IPNet, len(routes))
+	for i := range routes {
+		_, networks[i], _ = net.ParseCIDR(routes[i].CIDR)
+		routes[i].Overlaps = false
+	}
+	for i := range routes {
+		if networks[i] == nil {
+			continue
+		}
+		for j := i + 1; j < len(routes); j++ {
+			if networks[j] == nil || len(networks[i].IP) != len(networks[j].IP) {
+				continue
+			}
+			if networks[i].Contains(networks[j].IP) || networks[j].Contains(networks[i].IP) {
+				routes[i].Overlaps = true
+				routes[j].Overlaps = true
+			}
+		}
+	}
 }
 func (s *Store) Get(routeID string) (Route, bool) {
 	s.mu.RLock()

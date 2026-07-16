@@ -17,15 +17,19 @@ import (
 )
 
 type Server struct {
-	mu                                                        sync.Mutex
-	Socket, OpenConnect, Hook, VPNCScript, StatePath, LogPath string
-	OwnerUID                                                  int
-	cmd                                                       *exec.Cmd
+	mu                                                                  sync.Mutex
+	Socket, OpenConnect, Hook, VPNCScript, StatePath, LogPath, ConfigID string
+	OwnerUID                                                            int
+	cmd                                                                 *exec.Cmd
+	lastExit                                                            string
 }
 
 func (s *Server) Serve() error {
 	if os.Geteuid() != 0 {
 		return errors.New("helper must run as root")
+	}
+	if _, e := s.recoverSystemState(); e != nil {
+		return e
 	}
 	_ = os.Remove(s.Socket)
 	listener, e := net.Listen("unix", s.Socket)
@@ -47,6 +51,19 @@ func (s *Server) Serve() error {
 		go s.handle(conn)
 	}
 }
+func (s *Server) recoverSystemState() (bool, error) {
+	if _, e := os.Stat(s.StatePath); errors.Is(e, os.ErrNotExist) {
+		return false, nil
+	} else if e != nil {
+		return false, e
+	}
+	cmd := exec.Command(s.Hook)
+	cmd.Env = append(os.Environ(), "OPENCONNECT_REAL_VPNC_SCRIPT="+s.VPNCScript, "OPENCONNECT_ROUTE_STATE="+s.StatePath, "OPENCONNECT_RECOVER_ONLY=1")
+	if output, e := cmd.CombinedOutput(); e != nil {
+		return false, fmt.Errorf("stale network state recovery failed: %s: %w", strings.TrimSpace(string(output)), e)
+	}
+	return true, nil
+}
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(35 * time.Second))
@@ -56,24 +73,43 @@ func (s *Server) handle(conn net.Conn) {
 	decoder.DisallowUnknownFields()
 	if e := decoder.Decode(&req); e != nil {
 		response = Response{Error: e.Error()}
-	} else if e := s.execute(req); e != nil {
+	} else if e := s.execute(req, &response); e != nil {
 		response = Response{Error: e.Error()}
 	}
 	_ = json.NewEncoder(conn).Encode(response)
 }
-func (s *Server) execute(req Request) error {
+func (s *Server) execute(req Request, response *Response) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch req.Operation {
 	case "version":
-		if req.ProtocolVersion != 2 {
+		if req.ProtocolVersion != ProtocolVersion {
 			return errors.New("incompatible helper protocol")
 		}
+		response.ConfigID = s.ConfigID
 		return nil
 	case "connect":
 		return s.connect(req.Connect)
 	case "disconnect":
 		return s.disconnect()
+	case "status":
+		running := s.cmd != nil
+		response.Running = &running
+		response.LastExit = s.lastExit
+		return nil
+	case "recover":
+		// An agent can restart while this helper and its OpenConnect child are
+		// still alive. Never restore the pre-VPN network state in that case.
+		recovered := false
+		if s.cmd == nil {
+			var err error
+			recovered, err = s.recoverSystemState()
+			if err != nil {
+				return err
+			}
+		}
+		response.Recovered = &recovered
+		return nil
 	case "route.add":
 		return s.routeAdd(req.Route)
 	case "route.delete":
@@ -99,10 +135,13 @@ func (s *Server) connect(in *ConnectRequest) error {
 	if s.cmd != nil {
 		return errors.New("VPN is already running")
 	}
+	if _, e = s.recoverSystemState(); e != nil {
+		return e
+	}
+	s.lastExit = ""
 	if in.MACAddress != "" && !regexp.MustCompile(`(?i)^[0-9a-f]{2}([-:][0-9a-f]{2}){5}$`).MatchString(in.MACAddress) {
 		return errors.New("invalid MAC address")
 	}
-	_ = os.Remove(s.StatePath)
 	args := s.openConnectArgs(in)
 	cmd := exec.Command(s.OpenConnect, args...)
 	cmd.Env = append(os.Environ(), "OPENCONNECT_REAL_VPNC_SCRIPT="+s.VPNCScript, "OPENCONNECT_ROUTE_STATE="+s.StatePath, "OPENCONNECT_OWNER_UID="+fmt.Sprint(s.OwnerUID))
@@ -131,11 +170,14 @@ func (s *Server) connect(in *ConnectRequest) error {
 		}
 	}(in.Password, in.OTP)
 	go func() {
-		_ = cmd.Wait()
+		waitErr := cmd.Wait()
 		_ = logFile.Close()
 		s.mu.Lock()
 		if s.cmd == cmd {
 			s.cmd = nil
+			if waitErr != nil {
+				s.lastExit = waitErr.Error()
+			}
 		}
 		s.mu.Unlock()
 	}()

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +23,8 @@ import (
 	"openconnect.local/desktop/internal/platform"
 	"openconnect.local/desktop/internal/profiles"
 )
+
+var buildCommit = "unknown"
 
 func main() {
 	var helperSocket string
@@ -38,11 +42,16 @@ func main() {
 	if err = os.MkdirAll(data, 0700); err != nil {
 		fatal(err)
 	}
-	instanceFile, primary, err := acquireInstance(filepath.Join(data, "instance.lock"))
+	instancePath := filepath.Join(data, "instance.lock")
+	executable, err := os.Executable()
+	fatal(err)
+	executable, err = filepath.Abs(executable)
+	fatal(err)
+	instanceFile, primary, existingURL, err := acquirePortableInstance(instancePath, executable)
 	fatal(err)
 	if !primary {
-		if existingURL, readErr := os.ReadFile(filepath.Join(data, "instance.lock")); readErr == nil && strings.TrimSpace(string(existingURL)) != "" {
-			_ = platform.OpenBrowser(strings.TrimSpace(string(existingURL)))
+		if existingURL != "" {
+			_ = platform.OpenBrowser(existingURL)
 		}
 		return
 	}
@@ -55,17 +64,17 @@ func main() {
 		logs.Add("Error", "Privileged Helper", helperErr.Error())
 	}
 	vpn := openconnect.New(helperSocket, statePath, logPath, logs, ns)
-	executable, _ := os.Executable()
+	if recovered, recoverErr := vpn.RecoverStaleSystemState(); recoverErr != nil {
+		logs.Add("Warning", "Network Recovery", recoverErr.Error())
+	} else if recovered {
+		logs.Add("Info", "Network Recovery", "stale VPN DNS, proxy, and tunnel state restored")
+	}
 	keys := keychain.Store{Binary: filepath.Join(filepath.Dir(executable), "openconnect-keychain")}
-	server := api.New(ps, ns, keys, vpn, logs)
+	server := api.New(ps, ns, keys, vpn, logs, buildCommit)
 	listener, err := server.Listen()
 	fatal(err)
 	bootstrapURL := server.BootstrapURL()
-	portalURL := server.PortalURL()
-	_ = instanceFile.Truncate(0)
-	_, _ = instanceFile.Seek(0, 0)
-	_, _ = instanceFile.WriteString(portalURL)
-	_ = instanceFile.Sync()
+	fatal(writeInstanceInfo(instanceFile, instanceInfo{URL: bootstrapURL, Executable: executable, PID: os.Getpid()}))
 	statusPath := filepath.Join(data, "status.json")
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -80,7 +89,7 @@ func main() {
 	fmt.Println(bootstrapURL)
 	go func() {
 		for {
-			if trayErr := platform.RunTray(portalURL, statusPath); trayErr != nil {
+			if trayErr := platform.RunTray(bootstrapURL, statusPath, buildCommit); trayErr != nil {
 				logs.Add("Warning", "Tray", trayErr.Error()+"; restarting")
 			}
 			time.Sleep(2 * time.Second)
@@ -99,7 +108,10 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	_ = vpn.Disconnect()
+	if shutdownErr := vpn.Shutdown(15 * time.Second); shutdownErr != nil {
+		logs.Add("Error", "Shutdown", shutdownErr.Error())
+		fmt.Fprintln(os.Stderr, shutdownErr)
+	}
 }
 func acquireInstance(path string) (*os.File, bool, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
@@ -114,6 +126,104 @@ func acquireInstance(path string) (*os.File, bool, error) {
 		return nil, false, err
 	}
 	return file, true, nil
+}
+
+type instanceInfo struct {
+	URL        string `json:"url"`
+	Executable string `json:"executable,omitempty"`
+	PID        int    `json:"pid,omitempty"`
+}
+
+// acquirePortableInstance replaces an instance that is still running from a
+// different app bundle. This matters when a portable .app is moved or updated:
+// the old helper otherwise retains paths into the previous bundle forever.
+func acquirePortableInstance(path, executable string) (*os.File, bool, string, error) {
+	file, primary, err := acquireInstance(path)
+	if err != nil || primary {
+		return file, primary, "", err
+	}
+	info, err := readInstanceInfo(path)
+	if err != nil {
+		return nil, false, "", err
+	}
+	ownerPID := info.PID
+	ownerExecutable := info.Executable
+	if ownerPID == 0 {
+		ownerPID, _ = lockOwnerPID(path)
+	}
+	if ownerExecutable == "" && ownerPID > 0 {
+		ownerExecutable, _ = processExecutable(ownerPID)
+	}
+	if ownerExecutable == "" || sameExecutable(ownerExecutable, executable) {
+		return nil, false, info.URL, nil
+	}
+	if ownerPID <= 1 {
+		return nil, false, "", fmt.Errorf("could not identify previous application instance")
+	}
+	if err = syscall.Kill(ownerPID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return nil, false, "", fmt.Errorf("could not stop previous application instance: %w", err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		file, primary, err = acquireInstance(path)
+		if err != nil || primary {
+			return file, primary, "", err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil, false, "", fmt.Errorf("previous application instance did not stop")
+}
+
+func sameExecutable(running, current string) bool {
+	running = strings.TrimSpace(running)
+	return running == current || strings.HasPrefix(running, current+" ")
+}
+
+func lockOwnerPID(path string) (int, error) {
+	output, err := exec.Command("/usr/sbin/lsof", "-t", "--", path).Output()
+	if err != nil {
+		return 0, err
+	}
+	line := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
+	return strconv.Atoi(line)
+}
+
+func processExecutable(pid int) (string, error) {
+	output, err := exec.Command("/bin/ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	return strings.TrimSpace(string(output)), err
+}
+
+func writeInstanceInfo(file *os.File, info instanceInfo) error {
+	if err := file.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	if _, err = file.Write(encoded); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+func readInstanceInfo(path string) (instanceInfo, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return instanceInfo{}, err
+	}
+	var info instanceInfo
+	if json.Unmarshal(contents, &info) == nil && info.URL != "" {
+		return info, nil
+	}
+	// Compatibility with versions that stored only the bootstrap URL.
+	info.URL = strings.TrimSpace(string(contents))
+	if info.URL == "" {
+		return instanceInfo{}, errors.New("empty application instance file")
+	}
+	return info, nil
 }
 func fatal(err error) {
 	if err != nil {
