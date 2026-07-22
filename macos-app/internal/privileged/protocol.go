@@ -9,12 +9,13 @@ import (
 
 const (
 	DefaultSocket   = "/var/run/openconnect-desktop.sock"
-	ProtocolVersion = 6
+	ProtocolVersion = 7
 )
 
 type ConnectRequest struct {
 	Server, Protocol, Username, Group, Password, OTP, MACAddress string
 	Verbose                                                      bool
+	SaveServerScripts                                            bool
 }
 type RouteRequest struct{ ID, CIDR, PreviousCIDR string }
 type Request struct {

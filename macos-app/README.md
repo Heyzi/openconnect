@@ -23,6 +23,10 @@ the upstream OpenConnect C build.
 - runtime route table populated from OpenConnect server-route events;
 - add, edit, and delete operations for server and user routes;
 - downloadable ZIP diagnostics with redacted logs and secret-free profiles;
+- optional capture of the exact server-provided CSD payload in a private temporary directory, with a Finder shortcut and cleanup on the next launch;
+- connection inspector with staged DNS/TCP, TLS, authentication, posture, tunnel, UDP, and route state;
+- automatic DNS, TCP, TLS certificate, tunnel, route, and posture diagnostics after every successful connection;
+- Posture/HostScan center with request detection and captured payload size and SHA-256 metadata;
 - `.app` and `.dmg` packaging scripts;
 - placeholder helper binary whose interface deliberately accepts no commands.
 

@@ -39,6 +39,11 @@ func main() {
 	home, err := os.UserHomeDir()
 	fatal(err)
 	data := filepath.Join(home, "Library", "Application Support", "OpenConnect Desktop")
+	captureDir := filepath.Join(os.TempDir(), fmt.Sprintf("openconnect-desktop-csd-%d", os.Getuid()))
+	_ = os.RemoveAll(captureDir)
+	if err = os.MkdirAll(captureDir, 0700); err != nil {
+		fatal(err)
+	}
 	if err = os.MkdirAll(data, 0700); err != nil {
 		fatal(err)
 	}

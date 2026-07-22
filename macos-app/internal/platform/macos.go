@@ -24,6 +24,13 @@ func OpenBrowser(url string) error {
 	return exec.Command("open", url).Start()
 }
 
+func OpenFolder(path string) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	return exec.Command("open", path).Start()
+}
+
 func EnsureHelper(socket string) error {
 	if runtime.GOOS != "darwin" {
 		return nil
@@ -48,7 +55,11 @@ func EnsureHelper(socket string) error {
 		return err
 	}
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
-	command := fmt.Sprintf("/bin/launchctl remove org.openconnect.desktop.helper >/dev/null 2>&1; /bin/launchctl submit -l org.openconnect.desktop.helper -o /var/log/openconnect-desktop-helper.log -e /var/log/openconnect-desktop-helper.log -- %s --socket %s --owner-uid %d --openconnect %s --hook %s --vpnc-script %s --config-id %s --log /var/run/openconnect-desktop-openconnect.log", quote(paths[0]), quote(socket), os.Getuid(), quote(paths[1]), quote(paths[2]), quote(paths[3]), quote(configID))
+	captureDir := filepath.Join(os.TempDir(), fmt.Sprintf("openconnect-desktop-csd-%d", os.Getuid()))
+	if err := os.MkdirAll(captureDir, 0700); err != nil {
+		return err
+	}
+	command := fmt.Sprintf("/bin/launchctl remove org.openconnect.desktop.helper >/dev/null 2>&1; /bin/launchctl submit -l org.openconnect.desktop.helper -o /var/log/openconnect-desktop-helper.log -e /var/log/openconnect-desktop-helper.log -- %s --socket %s --owner-uid %d --openconnect %s --hook %s --vpnc-script %s --config-id %s --capture-dir %s --log /var/run/openconnect-desktop-openconnect.log", quote(paths[0]), quote(socket), os.Getuid(), quote(paths[1]), quote(paths[2]), quote(paths[3]), quote(configID), quote(captureDir))
 	appleScript := "do shell script " + strconv.Quote(command) + " with administrator privileges"
 	if output, runErr := exec.Command("/usr/bin/osascript", "-e", appleScript).CombinedOutput(); runErr != nil {
 		return fmt.Errorf("administrator authorization failed: %s", strings.TrimSpace(string(output)))

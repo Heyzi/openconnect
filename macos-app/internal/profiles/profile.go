@@ -25,6 +25,7 @@ type Profile struct {
 	Reconnect         bool     `json:"reconnect,omitempty"`
 	TrustedNetworks   []string `json:"trustedNetworks,omitempty"`
 	Verbose           bool     `json:"verbose,omitempty"`
+	SaveServerScripts bool     `json:"saveServerScripts,omitempty"`
 	MACAddress        string   `json:"macAddress,omitempty"`
 	RouteAdditions    []string `json:"routeAdditions,omitempty"`
 	RouteDeletions    []string `json:"routeDeletions,omitempty"`

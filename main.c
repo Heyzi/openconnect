@@ -174,6 +174,7 @@ enum {
 	OPT_COOKIE_ON_STDIN,
 	OPT_CSD_USER,
 	OPT_CSD_WRAPPER,
+	OPT_CSD_SAVE,
 	OPT_CIPHERSUITES,
 	OPT_DISABLE_IPV6,
 	OPT_DTLS_CIPHERS,
@@ -242,6 +243,7 @@ static const struct option long_options[] = {
 	OPTION("syslog", 0, 'l'),
 	OPTION("csd-user", 1, OPT_CSD_USER),
 	OPTION("csd-wrapper", 1, OPT_CSD_WRAPPER),
+	OPTION("csd-save", 1, OPT_CSD_SAVE),
 #endif
 #if defined(HAVE_POSIX_SPAWN) || defined(_WIN32)
 	OPTION("external-browser", 1, OPT_EXT_BROWSER),
@@ -1125,6 +1127,7 @@ static void usage(void)
 #ifndef _WIN32
 	printf("      --csd-user=USER             %s\n", _("Drop privileges during trojan execution"));
 	printf("      --csd-wrapper=SCRIPT        %s\n", _("Run SCRIPT instead of trojan binary"));
+	printf("      --csd-save=FILE             %s\n", _("Save downloaded trojan binary for inspection"));
 #endif
 	printf("      --force-trojan=INTERVAL     %s\n", _("Set minimum interval between trojan runs (in seconds)"));
 
@@ -1915,6 +1918,9 @@ int main(int argc, char *argv[])
 			break;
 		case OPT_CSD_WRAPPER:
 			vpninfo->csd_wrapper = keep_config_arg();
+			break;
+		case OPT_CSD_SAVE:
+			vpninfo->csd_save = keep_config_arg();
 			break;
 #endif /* !_WIN32 */
 		case 'F':

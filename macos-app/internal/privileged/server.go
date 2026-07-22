@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ type Server struct {
 	mu                                                                  sync.Mutex
 	Socket, OpenConnect, Hook, VPNCScript, StatePath, LogPath, ConfigID string
 	OwnerUID                                                            int
+	CaptureDir                                                          string
 	cmd                                                                 *exec.Cmd
 	lastExit                                                            string
 }
@@ -161,6 +163,24 @@ func (s *Server) connect(in *ConnectRequest) error {
 	if e = cmd.Start(); e != nil {
 		return e
 	}
+	if in.SaveServerScripts {
+		capturePath := filepath.Join(s.CaptureDir, "csd-payload.bin")
+		go func() {
+			for {
+				if err := os.Chown(capturePath, s.OwnerUID, -1); err == nil {
+					_ = os.Chmod(capturePath, 0600)
+					return
+				}
+				s.mu.Lock()
+				running := s.cmd == cmd
+				s.mu.Unlock()
+				if !running {
+					return
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}()
+	}
 	s.cmd = cmd
 	go func(password, otp string) {
 		defer stdin.Close()
@@ -188,6 +208,9 @@ func (s *Server) openConnectArgs(in *ConnectRequest) []string {
 	args := []string{"--protocol", in.Protocol, "--passwd-on-stdin", "--script", shellQuote(s.Hook)}
 	if in.Verbose {
 		args = append(args, "--dump-http-traffic", "-vvv")
+	}
+	if in.SaveServerScripts {
+		args = append(args, "--csd-save", filepath.Join(s.CaptureDir, "csd-payload.bin"))
 	}
 	if in.MACAddress != "" {
 		args = append(args, "--mac-address", in.MACAddress)

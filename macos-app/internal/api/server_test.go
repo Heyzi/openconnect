@@ -118,6 +118,17 @@ func TestBootstrapRestoresAndProtectsSession(t *testing.T) {
 		t.Fatalf("session info %d: %s", info.Code, info.Body.String())
 	}
 }
+
+func TestInspectionEndpoint(t *testing.T) {
+	s := testServer(t)
+	s.logs.Add("Info", "OpenConnect", "CSTP connected")
+	boot := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "")
+	cookie := boot.Result().Cookies()[0]
+	result := request(s, "GET", "/api/v1/inspection", "", cookie, "")
+	if result.Code != http.StatusOK || !strings.Contains(result.Body.String(), `"id":"tunnel"`) {
+		t.Fatalf("inspection %d: %s", result.Code, result.Body.String())
+	}
+}
 func TestCSRFAndRouteValidation(t *testing.T) {
 	s := testServer(t)
 	boot := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "")

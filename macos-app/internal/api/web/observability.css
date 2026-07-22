@@ -1,0 +1,10 @@
+.inspection,.checks,.posture{display:grid;gap:6px;margin-top:11px}
+.stage,.diagnostic-check,.posture-card{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:8px;align-items:start;padding:8px;border:1px solid #ecece8;border-radius:8px;background:#fafaf8}
+.stage-dot,.check-dot{width:8px;height:8px;margin-top:4px;border-radius:50%;background:#aaa}
+.complete .stage-dot,.pass .check-dot,.captured .stage-dot{background:#27a45b}
+.active .stage-dot,.warn .check-dot,.requested .stage-dot{background:#e4a11b}
+.error .stage-dot,.fail .check-dot{background:#d84b44}
+.stage b,.diagnostic-check b,.posture-card b{display:block;font-size:11px}
+.stage p,.diagnostic-check p,.posture-card p{font-size:10px;color:#777;overflow-wrap:anywhere}
+.stage-status,.check-status{font-size:9px;text-transform:uppercase;color:#888}
+.posture-meta{margin-top:5px;font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#666;overflow-wrap:anywhere}

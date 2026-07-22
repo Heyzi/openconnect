@@ -1362,6 +1362,20 @@ static int run_csd_script(struct openconnect_info *vpninfo, char *buf, int bufle
 		}
 		fchmod(fd, 0755);
 		close(fd);
+		if (vpninfo->csd_save) {
+			int savefd = open(vpninfo->csd_save, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+			if (savefd < 0 || write(savefd, (void *)buf, buflen) != buflen) {
+				int err = errno;
+				if (savefd >= 0)
+					close(savefd);
+				vpn_progress(vpninfo, PRG_ERR,
+					     _("Failed to save downloaded CSD payload: %s\n"), strerror(err));
+			} else {
+				close(savefd);
+				vpn_progress(vpninfo, PRG_INFO,
+					     _("Saved downloaded CSD payload to '%s'.\n"), vpninfo->csd_save);
+			}
+		}
 	}
 
 	vpn_progress(vpninfo, PRG_INFO,

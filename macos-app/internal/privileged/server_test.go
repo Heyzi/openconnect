@@ -3,6 +3,7 @@ package privileged
 import (
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,15 @@ func TestVerboseOpenConnectArguments(t *testing.T) {
 	want := []string{"--protocol", "anyconnect", "--passwd-on-stdin", "--script", "'/Applications/OpenConnect Desktop.app/Contents/Resources/bin/openconnect-script-hook'", "--dump-http-traffic", "-vvv", "--mac-address", "02:00:00:00:00:01", "https://vpn.example"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("arguments = %#v, want %#v", args, want)
+	}
+}
+
+func TestCaptureServerScriptsArgument(t *testing.T) {
+	s := Server{CaptureDir: "/tmp/openconnect-desktop-csd-501"}
+	in := &ConnectRequest{Protocol: "anyconnect", Server: "https://vpn.example", SaveServerScripts: true}
+	want := "--csd-save /tmp/openconnect-desktop-csd-501/csd-payload.bin"
+	if got := strings.Join(s.openConnectArgs(in), " "); !strings.Contains(got, want) {
+		t.Fatalf("arguments %q do not contain %q", got, want)
 	}
 }
 

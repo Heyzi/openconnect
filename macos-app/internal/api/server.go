@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"openconnect.local/desktop/internal/logging"
 	"openconnect.local/desktop/internal/network"
 	"openconnect.local/desktop/internal/openconnect"
+	"openconnect.local/desktop/internal/platform"
 	"openconnect.local/desktop/internal/profiles"
 )
 
@@ -114,8 +117,22 @@ func (s *Server) routes(m *http.ServeMux) {
 	})
 	m.HandleFunc("/api/v1/routes-export", method("GET", s.exportRoutes))
 	m.HandleFunc("/api/v1/diagnostics", method("POST", s.diagnostics))
+	m.HandleFunc("/api/v1/diagnostics/run", method("POST", s.runDiagnostics))
+	m.HandleFunc("/api/v1/inspection", method("GET", s.inspection))
+	m.HandleFunc("/api/v1/server-scripts/open", method("POST", s.openServerScripts))
 	web, _ := fs.Sub(assets, "web")
 	m.Handle("/", http.FileServer(http.FS(web)))
+}
+
+func serverScriptsDir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("openconnect-desktop-csd-%d", os.Getuid()))
+}
+func (s *Server) openServerScripts(w http.ResponseWriter, r *http.Request) {
+	if err := platform.OpenFolder(serverScriptsDir()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listRoutes(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +399,10 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logs.Add("Info", "Connectivity", "VPN server is reachable")
+	// A captured posture payload belongs to exactly one connection attempt.
+	// Remove the previous session's file so the inspector cannot attribute stale
+	// HostScan data to the new VPN session.
+	_ = os.Remove(capturePath())
 	if err := s.vpn.Connect(p, openconnect.Credentials{Password: in.Password, OTP: in.OTP}); err != nil {
 		http.Error(w, err.Error(), 409)
 		return

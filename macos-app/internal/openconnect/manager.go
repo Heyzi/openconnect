@@ -63,7 +63,7 @@ func (m *Manager) Connect(p profiles.Profile, credentials Credentials) error {
 		return errors.New("a VPN connection is already active")
 	}
 	m.mu.Unlock()
-	request := privileged.Request{Operation: "connect", Connect: &privileged.ConnectRequest{Server: p.Server, Protocol: p.Protocol, Username: p.Username, Group: p.Group, Password: credentials.Password, OTP: credentials.OTP, Verbose: p.Verbose, MACAddress: p.MACAddress}}
+	request := privileged.Request{Operation: "connect", Connect: &privileged.ConnectRequest{Server: p.Server, Protocol: p.Protocol, Username: p.Username, Group: p.Group, Password: credentials.Password, OTP: credentials.OTP, Verbose: p.Verbose, SaveServerScripts: p.SaveServerScripts, MACAddress: p.MACAddress}}
 	if err := m.helper.Do(request); err != nil {
 		return err
 	}
