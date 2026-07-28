@@ -45,6 +45,7 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
         statusItem.menu = menu
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
         updateStatus()
         timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(updateStatus), userInfo: nil, repeats: true)
     }
@@ -107,6 +108,7 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openPortal() { NSWorkspace.shared.open(portalURL) }
+    @objc private func didWake() { kill(agentPID, SIGUSR1) }
     @objc private func quit() {
         kill(agentPID, SIGTERM)
         NSApplication.shared.terminate(nil)

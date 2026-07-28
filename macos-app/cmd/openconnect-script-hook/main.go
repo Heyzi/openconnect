@@ -19,6 +19,7 @@ type Route struct {
 }
 type State struct {
 	AppliedAt    time.Time    `json:"appliedAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
 	Reason       string       `json:"reason"`
 	TunnelDevice string       `json:"tunnelDevice"`
 	Gateway      string       `json:"gateway"`
@@ -86,7 +87,7 @@ func main() {
 	}
 }
 func runtimeState(baseline State, reason, device, gateway, proxyPAC string, currentRoutes []Route) State {
-	return State{AppliedAt: baseline.AppliedAt, Reason: reason, TunnelDevice: device, Gateway: gateway, ProxyPAC: proxyPAC, Routes: currentRoutes, Proxies: baseline.Proxies, DNS: baseline.DNS}
+	return State{AppliedAt: baseline.AppliedAt, UpdatedAt: time.Now().UTC(), Reason: reason, TunnelDevice: device, Gateway: gateway, ProxyPAC: proxyPAC, Routes: currentRoutes, Proxies: baseline.Proxies, DNS: baseline.DNS}
 }
 func writeState(statePath string, state State) {
 	b, err := json.Marshal(state)

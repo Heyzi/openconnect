@@ -94,6 +94,11 @@ func (s *Server) execute(req Request, response *Response) error {
 		return s.connect(req.Connect)
 	case "disconnect":
 		return s.disconnect()
+	case "reconnect":
+		if s.cmd == nil {
+			return errors.New("VPN is not running")
+		}
+		return s.cmd.Process.Signal(syscall.SIGUSR2)
 	case "status":
 		running := s.cmd != nil
 		response.Running = &running

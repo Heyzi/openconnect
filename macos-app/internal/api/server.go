@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,6 +38,7 @@ type Server struct {
 	keychain                       keychain.Store
 	vpn                            *openconnect.Manager
 	logs                           *logging.Buffer
+	authMu                         sync.RWMutex
 	session, bootstrap, csrf, host string
 	buildCommit                    string
 	handler                        http.Handler
@@ -63,8 +65,12 @@ func (s *Server) Listen() (net.Listener, error) {
 	}
 	return l, err
 }
-func (s *Server) BootstrapURL() string { return "http://" + s.host + "/bootstrap?token=" + s.bootstrap }
-func (s *Server) PortalURL() string    { return "http://" + s.host + "/" }
+func (s *Server) BootstrapURL() string {
+	s.authMu.RLock()
+	defer s.authMu.RUnlock()
+	return "http://" + s.host + "/bootstrap?token=" + s.bootstrap
+}
+func (s *Server) PortalURL() string { return "http://" + s.host + "/" }
 func (s *Server) Serve(l net.Listener) error {
 	srv := &http.Server{Handler: s.handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	return srv.Serve(l)
@@ -72,6 +78,7 @@ func (s *Server) Serve(l net.Listener) error {
 func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("/bootstrap", method("GET", s.bootstrapHandler))
 	m.HandleFunc("/api/v1/session", method("GET", s.sessionInfo))
+	m.HandleFunc("/api/v1/logout", method("POST", s.logout))
 	m.HandleFunc("/api/v1/status", method("GET", s.status))
 	m.HandleFunc("/api/v1/connect", method("POST", s.connect))
 	m.HandleFunc("/api/v1/disconnect", method("POST", s.disconnect))
@@ -340,13 +347,19 @@ func (s *Server) secure(next http.Handler) http.Handler {
 			return
 		}
 		if r.URL.Path != "/bootstrap" {
+			s.authMu.RLock()
+			session := s.session
+			s.authMu.RUnlock()
 			c, err := r.Cookie("oc_session")
-			if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.session)) != 1 {
+			if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(session)) != 1 {
 				http.Error(w, "unauthorized", 401)
 				return
 			}
 		}
-		if r.Method != "GET" && r.Method != "HEAD" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(s.csrf)) != 1 {
+		s.authMu.RLock()
+		csrf := s.csrf
+		s.authMu.RUnlock()
+		if r.Method != "GET" && r.Method != "HEAD" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
 			http.Error(w, "invalid CSRF token", 403)
 			return
 		}
@@ -354,16 +367,32 @@ func (s *Server) secure(next http.Handler) http.Handler {
 	})
 }
 func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
-	validToken := subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(s.bootstrap)) == 1
+	s.authMu.Lock()
+	validToken := s.bootstrap != "" && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(s.bootstrap)) == 1
+	session := s.session
+	if validToken {
+		s.bootstrap = ""
+	}
+	s.authMu.Unlock()
 	if !validToken {
 		http.Error(w, "invalid bootstrap token", 403)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "oc_session", Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: "oc_session", Value: session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 func (s *Server) sessionInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]string{"csrfToken": s.csrf, "buildCommit": s.buildCommit})
+	s.authMu.RLock()
+	csrf := s.csrf
+	s.authMu.RUnlock()
+	writeJSON(w, 200, map[string]string{"csrfToken": csrf, "buildCommit": s.buildCommit})
+}
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	s.authMu.Lock()
+	s.session, s.csrf = token(), token()
+	s.authMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "oc_session", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) status(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.vpn.Status()) }
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {

@@ -78,6 +78,8 @@ Makefile
 /public/
 
 test-driver
+
+/problem/openconnect-diagnostics/
 tests/*.log
 tests/*.trs
 /tests/buftest

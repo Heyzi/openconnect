@@ -9,7 +9,7 @@ import (
 
 const (
 	DefaultSocket   = "/var/run/openconnect-desktop.sock"
-	ProtocolVersion = 7
+	ProtocolVersion = 8
 )
 
 type ConnectRequest struct {

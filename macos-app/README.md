@@ -8,12 +8,13 @@ the upstream OpenConnect C build.
 
 - agent process with graceful shutdown;
 - random IPv4 loopback portal address;
-- secret bootstrap URL with renewable HttpOnly session cookie, CSRF, Host and Origin checks;
+- one-time secret bootstrap URL with a revocable HttpOnly session cookie, CSRF, Host and Origin checks;
 - embedded, offline web portal;
 - versioned profile storage with `0600` file permissions;
 - profile create/read/update/delete API;
 - root-only helper with an allow-listed Unix-socket protocol;
 - managed OpenConnect lifecycle inside the helper;
+- automatic OpenConnect reconnect and route refresh after macOS wake;
 - post-`vpnc-script` route capture from `CISCO_SPLIT_INC/EXC` and `TUNDEV`;
 - system route add/delete/replace, with replace rollback on failure;
 - system PAC proxy snapshot, apply, and restore on disconnect;
@@ -36,8 +37,8 @@ the upstream OpenConnect C build.
 go run ./cmd/openconnect-desktop -openconnect /path/to/openconnect
 ```
 
-The bootstrap URL is printed on startup and opened in the default browser. The tray
-uses the same URL so it can restore the browser session after sleep or an agent restart. The portal
+The one-time bootstrap URL is printed on startup and opened in the default browser. The tray
+opens the token-free portal URL and relies on the existing browser session. The portal
 requests both the account password and OTP for each connection. Both are passed
 to OpenConnect through stdin and immediately discarded. Fully dynamic auth
 forms (group selection, password changes, banners, and browser SAML) and the

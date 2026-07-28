@@ -32,10 +32,12 @@ type Manager struct {
 	logs      *logging.Buffer
 	routes    *network.Store
 	status    Status
+	profile   profiles.Profile
 }
 type scriptState struct {
-	TunnelDevice string `json:"tunnelDevice"`
-	Reason       string `json:"reason"`
+	TunnelDevice string    `json:"tunnelDevice"`
+	Reason       string    `json:"reason"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 	Routes       []struct {
 		CIDR   string `json:"cidr"`
 		Source string `json:"source"`
@@ -70,10 +72,11 @@ func (m *Manager) Connect(p profiles.Profile, credentials Credentials) error {
 	now := time.Now().UTC()
 	m.mu.Lock()
 	m.status = Status{State: "connecting", ProfileID: p.ID, ProfileName: p.Name, Server: p.Server, StartedAt: &now}
+	m.profile = p
 	m.mu.Unlock()
 	m.routes.ClearServer()
 	m.logs.Add("Info", "OpenConnect", "root helper started connection")
-	go m.waitForApplied(now, p)
+	go m.waitForApplied(now, p, time.Time{})
 	go m.watchLog(now)
 	go m.watchProcess(now)
 	go m.watchTraffic(now)
@@ -119,6 +122,7 @@ func (m *Manager) watchProcess(start time.Time) {
 	// Mac is asleep after its CSTP reconnect attempts are exhausted.
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	helperFailures := 0
 	for range ticker.C {
 		m.mu.RLock()
 		active := m.status.StartedAt != nil && m.status.StartedAt.Equal(start) &&
@@ -129,14 +133,20 @@ func (m *Manager) watchProcess(start time.Time) {
 		}
 		response, err := m.helper.Query(privileged.Request{Operation: "status"})
 		if err != nil || response.Running == nil {
-			// A transient helper/socket failure must not declare the VPN dead.
-			continue
+			helperFailures++
+			if helperFailures < 6 {
+				continue
+			}
+		} else {
+			helperFailures = 0
 		}
-		if *response.Running {
+		if response.Running != nil && *response.Running {
 			continue
 		}
 		reason := "OpenConnect exited unexpectedly"
-		if response.LastExit != "" {
+		if helperFailures > 0 {
+			reason = "privileged helper is unavailable"
+		} else if response.LastExit != "" {
 			reason += ": " + response.LastExit
 		}
 		changed := false
@@ -190,13 +200,24 @@ func (m *Manager) readLog(offset int, remainder string, flush bool) (int, string
 	}
 	return offset, remainder
 }
-func (m *Manager) waitForApplied(start time.Time, profile profiles.Profile) {
-	deadline := time.Now().Add(60 * time.Second)
+func (m *Manager) waitForApplied(start time.Time, profile profiles.Profile, after time.Time) {
+	timeout := 60 * time.Second
+	if !after.IsZero() {
+		timeout = 5 * time.Minute
+	}
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		b, err := os.ReadFile(m.statePath)
 		if err == nil {
 			var state scriptState
-			if json.Unmarshal(b, &state) == nil && state.TunnelDevice != "" && (state.Reason == "connect" || state.Reason == "reconnect") {
+			if json.Unmarshal(b, &state) == nil && state.TunnelDevice != "" && (state.Reason == "connect" || state.Reason == "reconnect") &&
+				(after.IsZero() || state.Reason == "reconnect" && state.UpdatedAt.After(after)) {
+				m.mu.RLock()
+				active := m.status.StartedAt != nil && m.status.StartedAt.Equal(start) && m.status.State == "connecting"
+				m.mu.RUnlock()
+				if !active {
+					return
+				}
 				for _, route := range state.Routes {
 					m.routes.AddServerWithSource(route.CIDR, route.Source)
 				}
@@ -213,11 +234,38 @@ func (m *Manager) waitForApplied(start time.Time, profile profiles.Profile) {
 		time.Sleep(250 * time.Millisecond)
 	}
 	m.mu.Lock()
-	if m.status.State == "connecting" {
+	if m.status.StartedAt != nil && m.status.StartedAt.Equal(start) && m.status.State == "connecting" {
 		m.status.State = "error"
 		m.status.LastError = "timed out waiting for vpnc-script to apply network configuration"
+		if !after.IsZero() {
+			m.status.LastError = "timed out waiting for VPN reconnection"
+		}
 	}
 	m.mu.Unlock()
+}
+func (m *Manager) ReconnectAfterWake() error {
+	m.mu.RLock()
+	if m.status.State != "connected" || m.status.StartedAt == nil {
+		m.mu.RUnlock()
+		return nil
+	}
+	start, profile := *m.status.StartedAt, m.profile
+	m.mu.RUnlock()
+	requestedAt := time.Now().UTC()
+	if err := m.helper.Do(privileged.Request{Operation: "reconnect"}); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if m.status.StartedAt == nil || !m.status.StartedAt.Equal(start) || m.status.State != "connected" {
+		m.mu.Unlock()
+		return nil
+	}
+	m.status.State, m.status.Traffic = "connecting", nil
+	m.mu.Unlock()
+	m.routes.ClearServer()
+	m.logs.Add("Info", "OpenConnect", "Mac woke from sleep; VPN reconnect requested")
+	go m.waitForApplied(start, profile, requestedAt)
+	return nil
 }
 func (m *Manager) applySavedRoutes(profile profiles.Profile) {
 	for _, cidr := range profile.RouteDeletions {

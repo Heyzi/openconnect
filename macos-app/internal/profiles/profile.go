@@ -22,7 +22,6 @@ type Profile struct {
 	ServerFingerprint string   `json:"serverFingerprint,omitempty"`
 	ExtraArgs         []string `json:"extraArgs,omitempty"`
 	AutoConnect       bool     `json:"autoConnect,omitempty"`
-	Reconnect         bool     `json:"reconnect,omitempty"`
 	TrustedNetworks   []string `json:"trustedNetworks,omitempty"`
 	Verbose           bool     `json:"verbose,omitempty"`
 	SaveServerScripts bool     `json:"saveServerScripts,omitempty"`

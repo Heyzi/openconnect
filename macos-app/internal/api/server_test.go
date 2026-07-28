@@ -85,29 +85,24 @@ func request(s *Server, method, path, body string, cookie *http.Cookie, csrf str
 	s.handler.ServeHTTP(w, r)
 	return w
 }
-func TestBootstrapRestoresAndProtectsSession(t *testing.T) {
+func TestBootstrapIsSingleUseAndProtectsSession(t *testing.T) {
 	s := testServer(t)
+	bootstrap := s.bootstrap
 	unauth := request(s, "GET", "/api/v1/status", "", nil, "")
 	if unauth.Code != 401 {
 		t.Fatalf("unauth status=%d", unauth.Code)
 	}
-	first := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "")
+	first := request(s, "GET", "/bootstrap?token="+bootstrap, "", nil, "")
 	if first.Code != 303 {
 		t.Fatalf("bootstrap status=%d", first.Code)
 	}
 	cookie := first.Result().Cookies()[0]
-	reopen := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", cookie, "")
-	if reopen.Code != 303 {
-		t.Fatalf("authenticated reopen status=%d", reopen.Code)
+	reused := request(s, "GET", "/bootstrap?token="+bootstrap, "", nil, "")
+	if reused.Code != 403 {
+		t.Fatalf("reused bootstrap status=%d", reused.Code)
 	}
-	second := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "")
-	if second.Code != 303 {
-		t.Fatalf("session restore status=%d", second.Code)
-	}
-	restoredCookie := second.Result().Cookies()[0]
-	restored := request(s, "GET", "/api/v1/status", "", restoredCookie, "")
-	if restored.Code != 200 {
-		t.Fatalf("restored session status=%d", restored.Code)
+	if missing := request(s, "GET", "/bootstrap", "", nil, ""); missing.Code != 403 {
+		t.Fatalf("empty bootstrap status=%d", missing.Code)
 	}
 	ok := request(s, "GET", "/api/v1/status", "", cookie, "")
 	if ok.Code != 200 {
@@ -116,6 +111,19 @@ func TestBootstrapRestoresAndProtectsSession(t *testing.T) {
 	info := request(s, "GET", "/api/v1/session", "", cookie, "")
 	if info.Code != 200 || !strings.Contains(info.Body.String(), `"buildCommit":"test-commit"`) {
 		t.Fatalf("session info %d: %s", info.Code, info.Body.String())
+	}
+}
+
+func TestLogoutRevokesSession(t *testing.T) {
+	s := testServer(t)
+	boot := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "")
+	cookie := boot.Result().Cookies()[0]
+	logout := request(s, "POST", "/api/v1/logout", "", cookie, s.csrf)
+	if logout.Code != http.StatusNoContent || logout.Result().Cookies()[0].MaxAge != -1 {
+		t.Fatalf("logout status=%d cookies=%v", logout.Code, logout.Result().Cookies())
+	}
+	if got := request(s, "GET", "/api/v1/status", "", cookie, ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked session status=%d", got.Code)
 	}
 }
 

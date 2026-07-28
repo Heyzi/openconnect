@@ -86,6 +86,47 @@ func TestProcessWatcherIgnoresTransientHelperFailure(t *testing.T) {
 	}
 }
 
+func TestWakeReconnectRefreshesRoutes(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	start := time.Now().UTC()
+	client := privileged.Client{DoFunc: func(request privileged.Request) error {
+		if request.Operation != "reconnect" {
+			t.Fatalf("operation = %q, want reconnect", request.Operation)
+		}
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			updated := time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)
+			_ = os.WriteFile(statePath, []byte(`{"updatedAt":"`+updated+`","reason":"reconnect","tunnelDevice":"utun9","routes":[{"cidr":"10.0.0.0/8","source":"server-include"}]}`), 0600)
+		}()
+		return nil
+	}}
+	routes := network.NewStore()
+	routes.AddServerWithSource("192.168.0.0/16", "server-include")
+	manager := NewWithClient(client, statePath, logging.New(20), routes)
+	manager.status = Status{State: "connected", StartedAt: &start}
+	manager.profile = profiles.Profile{ID: "work"}
+
+	if err := manager.ReconnectAfterWake(); err != nil {
+		t.Fatal(err)
+	}
+	if status := manager.Status(); status.State != "connecting" {
+		t.Fatalf("status = %#v, want connecting", status)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if status := manager.Status(); status.State == "connected" {
+			got := routes.List()
+			if len(got) != 1 || got[0].CIDR != "10.0.0.0/8" {
+				t.Fatalf("routes = %#v", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("status did not return to connected: %#v", manager.Status())
+}
+
 func TestShutdownWaitsForProcessAndNetworkCleanup(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
@@ -140,7 +181,7 @@ func TestSavedRouteOverridesApplyAfterServerRoutes(t *testing.T) {
 	start := time.Now().UTC()
 	manager.status = Status{State: "connecting", StartedAt: &start}
 	profile := profiles.Profile{RouteDeletions: []string{"10.0.0.0/8"}, RouteAdditions: []string{"192.168.0.0/16"}}
-	manager.waitForApplied(start, profile)
+	manager.waitForApplied(start, profile, time.Time{})
 	got := routes.List()
 	if len(got) != 2 || got[0].CIDR != "172.16.0.0/12" || got[1].CIDR != "192.168.0.0/16" {
 		t.Fatalf("routes = %#v", got)
@@ -165,7 +206,7 @@ func TestWaitForAppliedIgnoresBaselineState(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		_ = os.WriteFile(statePath, []byte(`{"reason":"connect","tunnelDevice":"utun9","routes":[{"cidr":"10.0.0.0/8","source":"server-include"}]}`), 0600)
 	}()
-	manager.waitForApplied(start, profiles.Profile{})
+	manager.waitForApplied(start, profiles.Profile{}, time.Time{})
 	got := routes.List()
 	if len(got) != 1 || got[0].CIDR != "10.0.0.0/8" {
 		t.Fatalf("routes = %#v", got)
