@@ -54,11 +54,12 @@ OpenConnect arguments.
 Build OpenConnect in the repository root, then run:
 
 ```sh
-./packaging/build-app.sh
-./packaging/build-dmg.sh
+./packaging/build-release.sh
 ```
 
-The DMG filename includes the source commit, for example
+The release command rebuilds the C client, runs the Go tests, rebuilds the app
+and DMG, verifies both, and writes a SHA-256 checksum. The DMG filename includes
+the source commit and a `-dirty` suffix when appropriate, for example
 `OpenConnect-Desktop-295e77b4cbd8.dmg`. Set `BUILD_COMMIT` explicitly when
 building from a source archive without Git metadata.
 
@@ -71,11 +72,10 @@ distribution still requires an Apple Developer ID signature and notarization.
 
 ## Security boundary
 
-The portal and desktop agent run as the logged-in user. A macOS administrator
-prompt starts only the bundled helper as root. Its socket is owned by that user
-with mode `0600`, and its request schema is restricted to connection lifecycle
-and validated route mutations. A release build should install the same helper
-through signed SMAppService/XPC instead of the prototype authorization prompt.
+The portal and desktop agent run as the logged-in user. The bundled root helper
+is registered with `SMAppService` and requires approval in System Settings.
+Its Unix socket is owned by the console user with mode `0600`, and its request
+schema is restricted to connection lifecycle and validated route mutations.
 
 ## Verification
 

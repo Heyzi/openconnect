@@ -43,7 +43,11 @@ func (s *Server) runDiagnostics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "select a VPN profile first", http.StatusBadRequest)
 		return
 	}
-	report := diagnose(p, s.vpn.Status().State, len(s.network.List()), capturePath())
+	status := s.vpn.Status()
+	if status.ProfileID == p.ID && status.Server != "" {
+		p.Server = status.Server
+	}
+	report := diagnose(p, status.State, len(s.network.List()), capturePath())
 	writeJSON(w, http.StatusOK, report)
 }
 

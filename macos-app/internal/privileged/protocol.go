@@ -1,9 +1,13 @@
 package privileged
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
+	"os"
 	"time"
 )
 
@@ -11,6 +15,24 @@ const (
 	DefaultSocket   = "/var/run/openconnect-desktop.sock"
 	ProtocolVersion = 8
 )
+
+func ComponentID(paths ...string) (string, error) {
+	hash := sha256.New()
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		if _, err = io.Copy(hash, file); err != nil {
+			_ = file.Close()
+			return "", err
+		}
+		if err = file.Close(); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
 
 type ConnectRequest struct {
 	Server, Protocol, Username, Group, Password, OTP, MACAddress string

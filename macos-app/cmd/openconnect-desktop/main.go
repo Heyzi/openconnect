@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -79,15 +80,15 @@ func main() {
 	listener, err := server.Listen()
 	fatal(err)
 	bootstrapURL := server.BootstrapURL()
-	portalURL := server.PortalURL()
-	fatal(writeInstanceInfo(instanceFile, instanceInfo{URL: portalURL, Executable: executable, PID: os.Getpid()}))
+	fatal(writeInstanceInfo(instanceFile, instanceInfo{URL: bootstrapURL, Executable: executable, PID: os.Getpid()}))
 	statusPath := filepath.Join(data, "status.json")
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
+		var previous []byte
 		for range ticker.C {
 			if encoded, encodeErr := json.Marshal(vpn.Status()); encodeErr == nil {
-				_ = os.WriteFile(statusPath, encoded, 0600)
+				previous, _ = writeStatus(statusPath, previous, encoded)
 			}
 		}
 	}()
@@ -95,7 +96,7 @@ func main() {
 	fmt.Println(bootstrapURL)
 	go func() {
 		for {
-			if trayErr := platform.RunTray(portalURL, statusPath, buildCommit); trayErr != nil {
+			if trayErr := platform.RunTray(bootstrapURL, statusPath, buildCommit); trayErr != nil {
 				logs.Add("Warning", "Tray", trayErr.Error()+"; restarting")
 			}
 			time.Sleep(2 * time.Second)
@@ -128,6 +129,20 @@ func main() {
 		logs.Add("Error", "Shutdown", shutdownErr.Error())
 		fmt.Fprintln(os.Stderr, shutdownErr)
 	}
+}
+
+func writeStatus(path string, previous, encoded []byte) ([]byte, error) {
+	if bytes.Equal(previous, encoded) {
+		return previous, nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, encoded, 0600); err != nil {
+		return previous, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return previous, err
+	}
+	return append(previous[:0], encoded...), nil
 }
 func acquireInstance(path string) (*os.File, bool, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)

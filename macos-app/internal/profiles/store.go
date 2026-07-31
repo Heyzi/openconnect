@@ -57,35 +57,45 @@ func (s *Store) Save(p Profile) (Profile, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	next := append([]Profile{}, s.profiles...)
 	found := false
-	for i := range s.profiles {
-		if s.profiles[i].ID == p.ID {
-			s.profiles[i] = p
+	for i := range next {
+		if next[i].ID == p.ID {
+			next[i] = p
 			found = true
 			break
 		}
 	}
 	if !found {
-		s.profiles = append(s.profiles, p)
+		next = append(next, p)
 	}
-	return p, s.persist()
+	if err := s.persist(next); err != nil {
+		return Profile{}, err
+	}
+	s.profiles = next
+	return p, nil
 }
 func (s *Store) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.profiles {
 		if s.profiles[i].ID == id {
-			s.profiles = append(s.profiles[:i], s.profiles[i+1:]...)
-			return s.persist()
+			next := append([]Profile{}, s.profiles[:i]...)
+			next = append(next, s.profiles[i+1:]...)
+			if err := s.persist(next); err != nil {
+				return err
+			}
+			s.profiles = next
+			return nil
 		}
 	}
 	return os.ErrNotExist
 }
-func (s *Store) persist() error {
+func (s *Store) persist(profiles []Profile) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return err
 	}
-	clean := append([]Profile{}, s.profiles...)
+	clean := append([]Profile{}, profiles...)
 	for i := range clean {
 		clean[i].Password = ""
 	}

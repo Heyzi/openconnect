@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,8 +40,12 @@ func EnsureHelper(socket string) error {
 	}
 	resources := filepath.Clean(filepath.Join(filepath.Dir(executable), "..", "Resources"))
 	bin := filepath.Join(resources, "bin")
-	paths := []string{filepath.Join(bin, "openconnect-helper"), filepath.Join(bin, "openconnect"), filepath.Join(bin, "openconnect-script-hook"), filepath.Join(resources, "vpnc-script")}
-	configID := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(paths, "\n"))))
+	helper := filepath.Clean(filepath.Join(resources, "..", "Library", "LaunchServices", "openconnect-helper"))
+	paths := []string{helper, filepath.Join(bin, "openconnect"), filepath.Join(bin, "openconnect-script-hook"), filepath.Join(resources, "vpnc-script")}
+	configID, err := privileged.ComponentID(paths...)
+	if err != nil {
+		return fmt.Errorf("identify bundled components: %w", err)
+	}
 	if helperCompatible(socket, configID) {
 		return nil
 	}
@@ -54,15 +57,12 @@ func EnsureHelper(socket string) error {
 	if err := stopExistingHelperSession(socket); err != nil {
 		return err
 	}
-	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
-	captureDir := filepath.Join(os.TempDir(), fmt.Sprintf("openconnect-desktop-csd-%d", os.Getuid()))
-	if err := os.MkdirAll(captureDir, 0700); err != nil {
-		return err
-	}
-	command := fmt.Sprintf("/bin/launchctl remove org.openconnect.desktop.helper >/dev/null 2>&1; /bin/launchctl submit -l org.openconnect.desktop.helper -o /var/log/openconnect-desktop-helper.log -e /var/log/openconnect-desktop-helper.log -- %s --socket %s --owner-uid %d --openconnect %s --hook %s --vpnc-script %s --config-id %s --capture-dir %s --log /var/run/openconnect-desktop-openconnect.log", quote(paths[0]), quote(socket), os.Getuid(), quote(paths[1]), quote(paths[2]), quote(paths[3]), quote(configID), quote(captureDir))
-	appleScript := "do shell script " + strconv.Quote(command) + " with administrator privileges"
-	if output, runErr := exec.Command("/usr/bin/osascript", "-e", appleScript).CombinedOutput(); runErr != nil {
-		return fmt.Errorf("administrator authorization failed: %s", strings.TrimSpace(string(output)))
+	installer := filepath.Join(filepath.Dir(executable), "openconnect-helper-installer")
+	if output, runErr := exec.Command(installer, "register").CombinedOutput(); runErr != nil {
+		nativeError := strings.TrimSpace(string(output))
+		if fallbackErr := registerPortableHelper(helper); fallbackErr != nil {
+			return fmt.Errorf("register privileged helper: %s; portable fallback: %w", nativeError, fallbackErr)
+		}
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -74,6 +74,21 @@ func EnsureHelper(socket string) error {
 	}
 	return fmt.Errorf("privileged helper did not start")
 }
+
+func registerPortableHelper(helper string) error {
+	command := fmt.Sprintf(
+		"/bin/launchctl remove org.openconnect.desktop.helper >/dev/null 2>&1; /bin/launchctl submit -l org.openconnect.desktop.helper -o /var/log/openconnect-desktop-helper.log -e /var/log/openconnect-desktop-helper.log -- %s",
+		shellQuote(helper),
+	)
+	script := "do shell script " + strconv.Quote(command) + " with administrator privileges"
+	output, err := exec.Command("/usr/bin/osascript", "-e", script).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("administrator authorization failed: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 
 func stopExistingHelperSession(socket string) error {
 	client := privileged.Client{Socket: socket}

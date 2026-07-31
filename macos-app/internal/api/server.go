@@ -70,7 +70,6 @@ func (s *Server) BootstrapURL() string {
 	defer s.authMu.RUnlock()
 	return "http://" + s.host + "/bootstrap?token=" + s.bootstrap
 }
-func (s *Server) PortalURL() string { return "http://" + s.host + "/" }
 func (s *Server) Serve(l net.Listener) error {
 	srv := &http.Server{Handler: s.handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	return srv.Serve(l)
@@ -367,13 +366,10 @@ func (s *Server) secure(next http.Handler) http.Handler {
 	})
 }
 func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
-	s.authMu.Lock()
+	s.authMu.RLock()
 	validToken := s.bootstrap != "" && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(s.bootstrap)) == 1
 	session := s.session
-	if validToken {
-		s.bootstrap = ""
-	}
-	s.authMu.Unlock()
+	s.authMu.RUnlock()
 	if !validToken {
 		http.Error(w, "invalid bootstrap token", 403)
 		return
@@ -422,12 +418,25 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(in.Username) != "" {
 		p.Username = strings.TrimSpace(in.Username)
 	}
-	if err := checkServerReachable(p.Server); err != nil {
+	server, err := firstReachableServer(p.Servers(), func(server string) error {
+		return checkServerReachable(server, func(cidr string) error {
+			err := s.vpn.DeleteRoute(cidr)
+			if err == nil {
+				s.logs.Add("Warning", "Connectivity", "removed stale system route "+cidr)
+			}
+			return err
+		})
+	})
+	if err != nil {
 		s.logs.Add("Error", "Connectivity", err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	s.logs.Add("Info", "Connectivity", "VPN server is reachable")
+	if server != p.Server {
+		s.logs.Add("Warning", "Connectivity", "using fallback VPN server "+server)
+	}
+	p.Server, p.FallbackServers = server, nil
+	s.logs.Add("Info", "Connectivity", "VPN server "+server+" is reachable")
 	// A captured posture payload belongs to exactly one connection attempt.
 	// Remove the previous session's file so the inspector cannot attribute stale
 	// HostScan data to the new VPN session.
@@ -438,10 +447,19 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, s.vpn.Status())
 }
-func checkServerReachable(server string) error {
-	return checkServerReachableWithNetwork(server, net.DefaultResolver.LookupHost, net.DialTimeout)
+func firstReachableServer(servers []string, check func(string) error) (string, error) {
+	var lastErr error
+	for _, server := range servers {
+		if lastErr = check(server); lastErr == nil {
+			return server, nil
+		}
+	}
+	return "", fmt.Errorf("all VPN servers are unavailable: %w", lastErr)
 }
-func checkServerReachableWithNetwork(server string, lookup func(context.Context, string) ([]string, error), dial func(string, string, time.Duration) (net.Conn, error)) error {
+func checkServerReachable(server string, repair func(string) error) error {
+	return checkServerReachableWithNetwork(server, net.DefaultResolver.LookupHost, net.DialTimeout, repair)
+}
+func checkServerReachableWithNetwork(server string, lookup func(context.Context, string) ([]string, error), dial func(string, string, time.Duration) (net.Conn, error), repair func(string) error) error {
 	u, err := url.Parse(server)
 	if err != nil || u.Hostname() == "" {
 		return fmt.Errorf("invalid VPN server URL")
@@ -463,6 +481,15 @@ func checkServerReachableWithNetwork(server string, lookup func(context.Context,
 	var dialErr error
 	for _, ip := range addresses {
 		conn, connectErr := dial("tcp", net.JoinHostPort(ip, port), 3*time.Second)
+		if errors.Is(connectErr, syscall.EADDRNOTAVAIL) && repair != nil {
+			bits := "32"
+			if strings.Contains(ip, ":") {
+				bits = "128"
+			}
+			if repair(ip+"/"+bits) == nil {
+				conn, connectErr = dial("tcp", net.JoinHostPort(ip, port), 3*time.Second)
+			}
+		}
 		if connectErr == nil {
 			_ = conn.Close()
 			return nil
@@ -501,7 +528,9 @@ func (s *Server) saveProfile(w http.ResponseWriter, r *http.Request) {
 	if decode(w, r, &p) != nil {
 		return
 	}
-	if id := profileID(r); r.URL.Path != "/api/v1/profiles" && id != "" {
+	if r.URL.Path == "/api/v1/profiles" {
+		p.ID = ""
+	} else if id := profileID(r); id != "" {
 		p.ID = id
 	}
 	password := p.Password
@@ -518,16 +547,36 @@ func (s *Server) saveProfile(w http.ResponseWriter, r *http.Request) {
 		p.PasswordSet = true
 	}
 	p.Password = ""
-	saved, err := s.profiles.Save(p)
-	if err != nil {
+	if err := p.Validate(); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	if password != "" {
-		if err = s.keychain.Set(saved.ID, password); err != nil {
+	var oldPassword string
+	if password != "" && p.PasswordSet {
+		if existing, ok := s.profiles.Get(p.ID); ok && existing.PasswordSet {
+			var err error
+			oldPassword, err = s.keychain.Get(p.ID)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		}
+		if err := s.keychain.Set(p.ID, password); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
+	}
+	saved, err := s.profiles.Save(p)
+	if err != nil {
+		if password != "" {
+			if oldPassword != "" {
+				_ = s.keychain.Set(p.ID, oldPassword)
+			} else {
+				_ = s.keychain.Delete(p.ID)
+			}
+		}
+		http.Error(w, err.Error(), 400)
+		return
 	}
 	writeJSON(w, 200, saved)
 }
@@ -538,11 +587,31 @@ func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "disconnect the active profile before deleting it", http.StatusConflict)
 		return
 	}
-	if err := s.profiles.Delete(id); err != nil {
+	profile, ok := s.profiles.Get(id)
+	if !ok {
 		http.Error(w, "profile not found", 404)
 		return
 	}
-	_ = s.keychain.Delete(id)
+	var password string
+	if profile.PasswordSet {
+		var err error
+		password, err = s.keychain.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if err = s.keychain.Delete(id); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+	}
+	if err := s.profiles.Delete(id); err != nil {
+		if password != "" {
+			_ = s.keychain.Set(id, password)
+		}
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	w.WriteHeader(204)
 }
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {

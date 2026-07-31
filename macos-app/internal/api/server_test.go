@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -33,12 +34,12 @@ func TestServerReachabilityCheck(t *testing.T) {
 			t.Fatalf("unexpected dial: %s %s %s", network, address, timeout)
 		}
 		return left, nil
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := checkServerReachableWithNetwork("https://vpn.example", lookup, func(string, string, time.Duration) (net.Conn, error) {
 		return nil, errors.New("offline")
-	}); err == nil || !strings.Contains(err.Error(), "TCP connection") {
+	}, nil); err == nil || !strings.Contains(err.Error(), "TCP connection") {
 		t.Fatalf("closed VPN endpoint error = %v", err)
 	}
 }
@@ -49,9 +50,46 @@ func TestServerReachabilityReportsDNSFailureSeparately(t *testing.T) {
 	}, func(string, string, time.Duration) (net.Conn, error) {
 		t.Fatal("dial called after DNS failure")
 		return nil, nil
-	})
+	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "DNS lookup for VPN server vpn.example failed") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestServerReachabilityRepairsStaleHostRoute(t *testing.T) {
+	left, right := net.Pipe()
+	defer right.Close()
+	dials := 0
+	err := checkServerReachableWithNetwork("https://vpn.example", func(context.Context, string) ([]string, error) {
+		return []string{"192.0.2.10"}, nil
+	}, func(string, string, time.Duration) (net.Conn, error) {
+		dials++
+		if dials == 1 {
+			return nil, syscall.EADDRNOTAVAIL
+		}
+		return left, nil
+	}, func(cidr string) error {
+		if cidr != "192.0.2.10/32" {
+			t.Fatalf("repaired route = %q", cidr)
+		}
+		return nil
+	})
+	if err != nil || dials != 2 {
+		t.Fatalf("error = %v, dials = %d", err, dials)
+	}
+}
+
+func TestServerFailoverUsesFirstReachableServer(t *testing.T) {
+	checked := []string{}
+	server, err := firstReachableServer([]string{"https://vpn1.example", "https://vpn2.example", "https://vpn3.example"}, func(server string) error {
+		checked = append(checked, server)
+		if server == "https://vpn2.example" {
+			return nil
+		}
+		return errors.New("offline")
+	})
+	if err != nil || server != "https://vpn2.example" || len(checked) != 2 {
+		t.Fatalf("server = %q, checked = %#v, error = %v", server, checked, err)
 	}
 }
 
@@ -85,7 +123,7 @@ func request(s *Server, method, path, body string, cookie *http.Cookie, csrf str
 	s.handler.ServeHTTP(w, r)
 	return w
 }
-func TestBootstrapIsSingleUseAndProtectsSession(t *testing.T) {
+func TestBootstrapCanReopenAndProtectsSession(t *testing.T) {
 	s := testServer(t)
 	bootstrap := s.bootstrap
 	unauth := request(s, "GET", "/api/v1/status", "", nil, "")
@@ -98,7 +136,7 @@ func TestBootstrapIsSingleUseAndProtectsSession(t *testing.T) {
 	}
 	cookie := first.Result().Cookies()[0]
 	reused := request(s, "GET", "/bootstrap?token="+bootstrap, "", nil, "")
-	if reused.Code != 403 {
+	if reused.Code != http.StatusSeeOther {
 		t.Fatalf("reused bootstrap status=%d", reused.Code)
 	}
 	if missing := request(s, "GET", "/bootstrap", "", nil, ""); missing.Code != 403 {
@@ -124,6 +162,38 @@ func TestLogoutRevokesSession(t *testing.T) {
 	}
 	if got := request(s, "GET", "/api/v1/status", "", cookie, ""); got.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked session status=%d", got.Code)
+	}
+	reopened := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "")
+	if reopened.Code != http.StatusSeeOther {
+		t.Fatalf("reopen status=%d", reopened.Code)
+	}
+	if got := request(s, "GET", "/api/v1/status", "", reopened.Result().Cookies()[0], ""); got.Code != http.StatusOK {
+		t.Fatalf("reopened session status=%d", got.Code)
+	}
+}
+
+func TestCreateProfileIgnoresClientSuppliedID(t *testing.T) {
+	s := testServer(t)
+	boot := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "")
+	cookie := boot.Result().Cookies()[0]
+	result := request(s, "POST", "/api/v1/profiles", `{"id":"00112233445566778899aabb","name":"Work","server":"https://vpn.example"}`, cookie, s.csrf)
+	if result.Code != http.StatusOK || strings.Contains(result.Body.String(), "00112233445566778899aabb") {
+		t.Fatalf("create profile %d: %s", result.Code, result.Body.String())
+	}
+}
+
+func TestPasswordFailureDoesNotSaveProfile(t *testing.T) {
+	s := testServer(t)
+	s.keychain = keychain.Store{SetFunc: func(string, string) error { return errors.New("keychain unavailable") }}
+	r := httptest.NewRequest("POST", "http://"+s.host+"/api/v1/profiles", strings.NewReader(`{"name":"Work","server":"https://vpn.example","password":"secret"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.saveProfile(w, r)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("save status=%d: %s", w.Code, w.Body.String())
+	}
+	if len(s.profiles.List()) != 0 {
+		t.Fatal("profile was saved after Keychain failure")
 	}
 }
 

@@ -7,7 +7,12 @@ import (
 	"strings"
 )
 
-type Store struct{ Binary string }
+type Store struct {
+	Binary     string
+	SetFunc    func(string, string) error
+	GetFunc    func(string) (string, error)
+	DeleteFunc func(string) error
+}
 
 func (s Store) run(operation, account, secret string) (string, error) {
 	if s.Binary == "" {
@@ -25,6 +30,23 @@ func (s Store) run(operation, account, secret string) (string, error) {
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
-func (s Store) Set(account, secret string) error   { _, err := s.run("set", account, secret); return err }
-func (s Store) Get(account string) (string, error) { return s.run("get", account, "") }
-func (s Store) Delete(account string) error        { _, err := s.run("delete", account, ""); return err }
+func (s Store) Set(account, secret string) error {
+	if s.SetFunc != nil {
+		return s.SetFunc(account, secret)
+	}
+	_, err := s.run("set", account, secret)
+	return err
+}
+func (s Store) Get(account string) (string, error) {
+	if s.GetFunc != nil {
+		return s.GetFunc(account)
+	}
+	return s.run("get", account, "")
+}
+func (s Store) Delete(account string) error {
+	if s.DeleteFunc != nil {
+		return s.DeleteFunc(account)
+	}
+	_, err := s.run("delete", account, "")
+	return err
+}

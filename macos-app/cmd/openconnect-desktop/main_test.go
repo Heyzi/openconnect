@@ -63,3 +63,29 @@ func TestSameExecutable(t *testing.T) {
 		t.Fatal("moved executable was treated as the current instance")
 	}
 }
+
+func TestWriteStatusIsAtomicAndSkipsUnchangedContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	previous, err := writeStatus(path, nil, []byte(`{"state":"connected"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err = writeStatus(path, previous, []byte(`{"state":"connected"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unchanged.ModTime().Equal(info.ModTime()) {
+		t.Fatal("unchanged status was rewritten")
+	}
+	if _, err = os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temporary status file remains: %v", err)
+	}
+}

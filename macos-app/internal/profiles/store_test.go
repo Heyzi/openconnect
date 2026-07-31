@@ -70,6 +70,24 @@ func TestStoreRoundTripAndPermissions(t *testing.T) {
 	}
 }
 
+func TestFailedSaveDoesNotMutateStore(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &Store{
+		path:     filepath.Join(blocker, "profiles.json"),
+		profiles: []Profile{{ID: "00112233445566778899aabb", Name: "Old", Server: "https://vpn.example"}},
+	}
+	if _, err := store.Save(Profile{ID: "00112233445566778899aabb", Name: "New", Server: "https://vpn.example"}); err == nil {
+		t.Fatal("save unexpectedly succeeded")
+	}
+	if got, _ := store.Get("00112233445566778899aabb"); got.Name != "Old" {
+		t.Fatalf("failed save mutated memory: %#v", got)
+	}
+}
+
 func TestProfileValidation(t *testing.T) {
 	for _, server := range []string{"", "vpn.example.com", "ftp://vpn.example.com"} {
 		p := Profile{Name: "x", Server: server}

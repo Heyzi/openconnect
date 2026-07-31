@@ -9,22 +9,27 @@ OPENCONNECT_BINARY=${OPENCONNECT_BINARY:-"$SOURCE_ROOT/.libs/openconnect"}
 OPENCONNECT_LIBRARY=${OPENCONNECT_LIBRARY:-"$SOURCE_ROOT/.libs/libopenconnect.5.dylib"}
 VPNC_SCRIPT=${VPNC_SCRIPT:-/opt/homebrew/etc/vpnc/vpnc-script}
 GO=${GO:-go}
-BUILD_COMMIT=${BUILD_COMMIT:-$(git -C "$SOURCE_ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)}
+if [ -z "${BUILD_COMMIT:-}" ]; then
+  BUILD_COMMIT=$(git -C "$SOURCE_ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
+  test -z "$(git -C "$SOURCE_ROOT" status --porcelain 2>/dev/null)" || BUILD_COMMIT="$BUILD_COMMIT-dirty"
+fi
 GOCACHE=${GOCACHE:-/tmp/openconnect-desktop-go-cache}
 export GOCACHE
 SWIFT_MODULECACHE_PATH=${SWIFT_MODULECACHE_PATH:-/tmp/openconnect-desktop-swift-cache}
 export SWIFT_MODULECACHE_PATH
 CLANG_MODULE_CACHE_PATH=${CLANG_MODULE_CACHE_PATH:-/tmp/openconnect-desktop-clang-cache}
 export CLANG_MODULE_CACHE_PATH
-rm -rf "$APP"; mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/bin" "$TRAY_CONTENTS/MacOS"
+rm -rf "$APP"; mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/bin" "$CONTENTS/Library/LaunchDaemons" "$CONTENTS/Library/LaunchServices" "$TRAY_CONTENTS/MacOS"
 cp "$ROOT/packaging/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/packaging/Tray-Info.plist" "$TRAY_CONTENTS/Info.plist"
+cp "$ROOT/packaging/org.openconnect.desktop.helper.plist" "$CONTENTS/Library/LaunchDaemons/"
 if [ -f "$ROOT/assets/AppIcon.icns" ]; then cp "$ROOT/assets/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"; fi
 CGO_ENABLED=0 "$GO" build -trimpath -ldflags="-s -w -X main.buildCommit=$BUILD_COMMIT" -o "$CONTENTS/MacOS/openconnect-desktop" "$ROOT/cmd/openconnect-desktop"
-CGO_ENABLED=0 "$GO" build -trimpath -ldflags='-s -w' -o "$CONTENTS/Resources/bin/openconnect-helper" "$ROOT/cmd/openconnect-helper"
+CGO_ENABLED=0 "$GO" build -trimpath -ldflags='-s -w' -o "$CONTENTS/Library/LaunchServices/openconnect-helper" "$ROOT/cmd/openconnect-helper"
 CGO_ENABLED=0 "$GO" build -trimpath -ldflags='-s -w' -o "$CONTENTS/Resources/bin/openconnect-script-hook" "$ROOT/cmd/openconnect-script-hook"
 xcrun swiftc -O -framework AppKit -o "$TRAY_CONTENTS/MacOS/openconnect-tray" "$ROOT/native/macos/Tray.swift"
 xcrun swiftc -O -framework Security -o "$CONTENTS/MacOS/openconnect-keychain" "$ROOT/native/macos/Keychain.swift"
+xcrun swiftc -O -framework ServiceManagement -o "$CONTENTS/MacOS/openconnect-helper-installer" "$ROOT/native/macos/HelperInstaller.swift"
 test -x "$OPENCONNECT_BINARY" || { echo "OpenConnect binary not found: $OPENCONNECT_BINARY" >&2; exit 1; }
 test -f "$OPENCONNECT_LIBRARY" || { echo "OpenConnect library not found: $OPENCONNECT_LIBRARY" >&2; exit 1; }
 test -f "$VPNC_SCRIPT" || { echo "vpnc-script not found: $VPNC_SCRIPT" >&2; exit 1; }
@@ -40,9 +45,10 @@ cp "$SOURCE_ROOT/COPYING.LGPL" "$CONTENTS/Resources/Licenses/OpenConnect-LGPL-2.
 find "$CONTENTS/Frameworks" -type f -exec codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" {} \;
 codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$CONTENTS/Resources/bin/libopenconnect.5.dylib"
 codesign --force --timestamp=none --options runtime --entitlements "$ROOT/packaging/OpenConnect.entitlements" --sign "$CODESIGN_IDENTITY" "$CONTENTS/Resources/bin/openconnect"
-codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$CONTENTS/Resources/bin/openconnect-helper"
+codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$CONTENTS/Library/LaunchServices/openconnect-helper"
 codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$CONTENTS/Resources/bin/openconnect-script-hook"
 codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$CONTENTS/MacOS/openconnect-keychain"
+codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$CONTENTS/MacOS/openconnect-helper-installer"
 codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$TRAY_APP"
 codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$CONTENTS/MacOS/openconnect-desktop"
 codesign --force --timestamp=none --options runtime --sign "$CODESIGN_IDENTITY" "$APP"

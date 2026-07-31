@@ -15,6 +15,7 @@ type Profile struct {
 	ID                string   `json:"id"`
 	Name              string   `json:"name"`
 	Server            string   `json:"server"`
+	FallbackServers   []string `json:"fallbackServers,omitempty"`
 	Protocol          string   `json:"protocol,omitempty"`
 	Username          string   `json:"username,omitempty"`
 	Group             string   `json:"group,omitempty"`
@@ -40,15 +41,34 @@ func NewID() string {
 	return hex.EncodeToString(b)
 }
 
+func (p Profile) Servers() []string {
+	return append([]string{p.Server}, p.FallbackServers...)
+}
+
 func (p *Profile) Validate() error {
 	p.Name, p.Server = strings.TrimSpace(p.Name), strings.TrimSpace(p.Server)
+	if p.ID != "" {
+		decoded, err := hex.DecodeString(p.ID)
+		if err != nil || len(decoded) != 12 || p.ID != strings.ToLower(p.ID) {
+			return errors.New("profile ID must be 24 lowercase hexadecimal characters")
+		}
+	}
 	if p.Name == "" {
 		return errors.New("profile name is required")
 	}
-	u, err := url.Parse(p.Server)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return errors.New("server must be an http or https URL")
+	servers, seen := make([]string, 0, 1+len(p.FallbackServers)), map[string]bool{}
+	for _, server := range p.Servers() {
+		server = strings.TrimSpace(server)
+		u, err := url.Parse(server)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			return errors.New("every server must be an http or https URL")
+		}
+		if !seen[server] {
+			seen[server] = true
+			servers = append(servers, server)
+		}
 	}
+	p.Server, p.FallbackServers = servers[0], servers[1:]
 	if p.ID == "" {
 		p.ID = NewID()
 	}
@@ -64,6 +84,7 @@ func (p *Profile) Validate() error {
 		// command line: --mac-address=02:00:00:00:00:01.
 		p.MACAddress = strings.ToLower(strings.ReplaceAll(p.MACAddress, "-", ":"))
 	}
+	var err error
 	p.RouteAdditions, err = normalizeRouteRules(p.RouteAdditions)
 	if err != nil {
 		return fmt.Errorf("route additions: %w", err)
