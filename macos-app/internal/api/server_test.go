@@ -93,6 +93,55 @@ func TestServerFailoverUsesFirstReachableServer(t *testing.T) {
 	}
 }
 
+func TestConnectLetsOpenConnectDetermineServerAvailability(t *testing.T) {
+	s := testServer(t)
+	cookie := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "").Result().Cookies()[0]
+	profile, err := s.profiles.Save(profiles.Profile{Name: "Work", Server: "https://192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := request(s, "POST", "/api/v1/connect", `{"profileId":"`+profile.ID+`","password":"secret","otp":"123456"}`, cookie, s.csrf)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
+	}
+	for _, entry := range s.logs.Entries() {
+		if strings.Contains(entry.Message, "is reachable") {
+			t.Fatalf("misleading connectivity log: %q", entry.Message)
+		}
+	}
+}
+
+func TestRecoverEndpointRequestsCleanup(t *testing.T) {
+	s := testServer(t)
+	operations := make(chan string, 4)
+	running := false
+	s.vpn = openconnect.NewWithClient(privileged.Client{
+		DoFunc: func(request privileged.Request) error {
+			operations <- request.Operation
+			return nil
+		},
+		QueryFunc: func(request privileged.Request) (privileged.Response, error) {
+			operations <- request.Operation
+			return privileged.Response{OK: true, Running: &running, Recovered: &running}, nil
+		},
+	}, filepath.Join(t.TempDir(), "state.json"), s.logs, s.network)
+	cookie := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "").Result().Cookies()[0]
+
+	response := request(s, "POST", "/api/v1/recover", "", cookie, s.csrf)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
+	}
+	select {
+	case operation := <-operations:
+		if operation != "disconnect" {
+			t.Fatalf("first operation = %q, want disconnect", operation)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not request cleanup")
+	}
+}
+
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()

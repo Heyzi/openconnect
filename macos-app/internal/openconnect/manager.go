@@ -149,19 +149,7 @@ func (m *Manager) watchProcess(start time.Time) {
 		} else if response.LastExit != "" {
 			reason += ": " + response.LastExit
 		}
-		changed := false
-		m.mu.Lock()
-		if m.status.StartedAt != nil && m.status.StartedAt.Equal(start) &&
-			(m.status.State == "connecting" || m.status.State == "connected") {
-			m.status.State = "error"
-			m.status.LastError = reason
-			changed = true
-		}
-		m.mu.Unlock()
-		if changed {
-			m.routes.Clear()
-			m.logs.Add("Error", "OpenConnect", reason)
-		}
+		m.failAndCleanup(start, reason)
 		return
 	}
 }
@@ -233,15 +221,11 @@ func (m *Manager) waitForApplied(start time.Time, profile profiles.Profile, afte
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	m.mu.Lock()
-	if m.status.StartedAt != nil && m.status.StartedAt.Equal(start) && m.status.State == "connecting" {
-		m.status.State = "error"
-		m.status.LastError = "timed out waiting for vpnc-script to apply network configuration"
-		if !after.IsZero() {
-			m.status.LastError = "timed out waiting for VPN reconnection"
-		}
+	reason := "timed out waiting for vpnc-script to apply network configuration"
+	if !after.IsZero() {
+		reason = "timed out waiting for VPN reconnection"
 	}
-	m.mu.Unlock()
+	m.failAndCleanup(start, reason)
 }
 func (m *Manager) ReconnectAfterWake() error {
 	m.mu.RLock()
@@ -304,7 +288,20 @@ func (m *Manager) Disconnect() error {
 	m.status.State = "disconnecting"
 	m.mu.Unlock()
 	m.logs.Add("Info", "OpenConnect", "disconnect requested through root helper")
-	go m.finishDisconnect(startedAt)
+	go m.finishDisconnect(startedAt, "", false, 15*time.Second)
+	return nil
+}
+
+func (m *Manager) Recover() error {
+	if err := m.helper.Do(privileged.Request{Operation: "disconnect"}); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	startedAt := m.status.StartedAt
+	m.status.State = "disconnecting"
+	m.mu.Unlock()
+	m.logs.Add("Info", "OpenConnect", "network recovery requested through root helper")
+	go m.finishDisconnect(startedAt, "", true, 15*time.Second)
 	return nil
 }
 
@@ -314,41 +311,98 @@ func (m *Manager) Shutdown(timeout time.Duration) error {
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		response, err := m.helper.Query(privileged.Request{Operation: "status"})
-		if err == nil && response.Running != nil && !*response.Running {
-			if m.statePath == "" {
-				return nil
-			}
-			if _, stateErr := os.Stat(m.statePath); errors.Is(stateErr, os.ErrNotExist) {
-				return nil
-			}
+		stopped, stateRemoved := m.cleanupStatus()
+		if stopped && stateRemoved {
+			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("timed out waiting for OpenConnect and network cleanup to finish")
 }
 
-func (m *Manager) finishDisconnect(startedAt *time.Time) {
+func (m *Manager) finishDisconnect(startedAt *time.Time, finalError string, recover bool, timeout time.Duration) {
 	// The hook removes its state file only after the original vpnc-script has
 	// finished deleting routes and restoring the network configuration.
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(timeout)
+	recoveryRequested := false
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(m.statePath); errors.Is(err, os.ErrNotExist) {
+		stopped, stateRemoved := m.cleanupStatus()
+		if stopped && stateRemoved {
 			break
+		}
+		if recover && stopped && !stateRemoved && !recoveryRequested {
+			if _, recoverErr := m.helper.Query(privileged.Request{Operation: "recover"}); recoverErr == nil {
+				recoveryRequested = true
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	// Give the log tailer one final cycle to publish vpnc-script's delete lines.
-	time.Sleep(400 * time.Millisecond)
+	stopped, stateRemoved := m.cleanupStatus()
 	m.mu.Lock()
 	if m.status.State != "disconnecting" || !sameStart(m.status.StartedAt, startedAt) {
 		m.mu.Unlock()
 		return
 	}
-	m.status = Status{State: "disconnected"}
+	if !stopped || !stateRemoved {
+		m.status.LastError = "timed out waiting for OpenConnect and network cleanup to finish"
+		if finalError != "" {
+			m.status.LastError = finalError + "; " + m.status.LastError
+		}
+		message := m.status.LastError
+		m.mu.Unlock()
+		m.logs.Add("Error", "OpenConnect", message)
+		return
+	}
+	if finalError == "" {
+		m.status = Status{State: "disconnected"}
+	} else {
+		m.status.State = "error"
+		m.status.LastError = finalError
+		m.status.StartedAt = nil
+		m.status.Traffic = nil
+	}
 	m.mu.Unlock()
 	m.routes.Clear()
 	m.logs.Add("Info", "Routing", "VPN session routes cleared after vpnc-script cleanup")
+}
+
+func (m *Manager) cleanupStatus() (bool, bool) {
+	response, err := m.helper.Query(privileged.Request{Operation: "status"})
+	stopped := err == nil && response.Running != nil && !*response.Running
+	if m.statePath == "" {
+		return stopped, true
+	}
+	_, stateErr := os.Stat(m.statePath)
+	return stopped, errors.Is(stateErr, os.ErrNotExist)
+}
+
+func (m *Manager) failAndCleanup(start time.Time, reason string) {
+	m.mu.Lock()
+	if m.status.StartedAt == nil || !m.status.StartedAt.Equal(start) || (m.status.State != "connecting" && m.status.State != "connected") {
+		m.mu.Unlock()
+		return
+	}
+	m.status.State = "error"
+	m.status.LastError = reason
+	m.mu.Unlock()
+	m.logs.Add("Error", "OpenConnect", reason)
+	if err := m.helper.Do(privileged.Request{Operation: "disconnect"}); err != nil {
+		m.mu.Lock()
+		if m.status.StartedAt != nil && m.status.StartedAt.Equal(start) && m.status.State == "error" {
+			m.status.State = "disconnecting"
+			m.status.LastError = reason + "; cleanup request failed: " + err.Error()
+		}
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Lock()
+	if m.status.StartedAt == nil || !m.status.StartedAt.Equal(start) || m.status.State != "error" {
+		m.mu.Unlock()
+		return
+	}
+	m.status.State = "disconnecting"
+	m.mu.Unlock()
+	go m.finishDisconnect(&start, reason, true, 15*time.Second)
 }
 
 func sameStart(left, right *time.Time) bool {
@@ -357,7 +411,6 @@ func sameStart(left, right *time.Time) bool {
 	}
 	return left.Equal(*right)
 }
-func (m *Manager) Helper() privileged.Client { return m.helper }
 func (m *Manager) AddRoute(cidr string) error {
 	return m.helper.Do(privileged.Request{Operation: "route.add", Route: &privileged.RouteRequest{CIDR: cidr}})
 }

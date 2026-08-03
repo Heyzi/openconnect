@@ -16,12 +16,20 @@ import (
 
 func TestUnexpectedOpenConnectExitChangesConnectedStatusToError(t *testing.T) {
 	running := false
-	client := privileged.Client{QueryFunc: func(request privileged.Request) (privileged.Response, error) {
-		if request.Operation != "status" {
-			t.Fatalf("operation = %q, want status", request.Operation)
-		}
-		return privileged.Response{OK: true, Running: &running, LastExit: "exit status 1"}, nil
-	}}
+	client := privileged.Client{
+		DoFunc: func(request privileged.Request) error {
+			if request.Operation != "disconnect" {
+				t.Fatalf("operation = %q, want disconnect", request.Operation)
+			}
+			return nil
+		},
+		QueryFunc: func(request privileged.Request) (privileged.Response, error) {
+			if request.Operation != "status" {
+				t.Fatalf("operation = %q, want status", request.Operation)
+			}
+			return privileged.Response{OK: true, Running: &running, LastExit: "exit status 1"}, nil
+		},
+	}
 	manager := NewWithClient(client, "", logging.New(20), network.NewStore())
 	start := time.Now().UTC()
 	manager.status = Status{State: "connected", StartedAt: &start}
@@ -163,6 +171,93 @@ func TestShutdownWaitsForProcessAndNetworkCleanup(t *testing.T) {
 	if statusCalls < 2 {
 		t.Fatalf("status calls = %d, want at least 2", statusCalls)
 	}
+}
+
+func TestFinishDisconnectWaitsForProcessAndStateFile(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(statePath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	statusCalls := 0
+	running := true
+	client := privileged.Client{QueryFunc: func(request privileged.Request) (privileged.Response, error) {
+		statusCalls++
+		if statusCalls == 2 {
+			running = false
+			if err := os.Remove(statePath); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return privileged.Response{OK: true, Running: &running}, nil
+	}}
+	manager := NewWithClient(client, statePath, logging.New(20), network.NewStore())
+	start := time.Now().UTC()
+	manager.status = Status{State: "disconnecting", StartedAt: &start}
+
+	manager.finishDisconnect(&start, "", false, time.Second)
+
+	if statusCalls < 2 || manager.Status().State != "disconnected" {
+		t.Fatalf("status calls = %d, status = %#v", statusCalls, manager.Status())
+	}
+}
+
+func TestFinishDisconnectKeepsBlockingStateWhenCleanupTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(statePath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	running := false
+	client := privileged.Client{QueryFunc: func(privileged.Request) (privileged.Response, error) {
+		return privileged.Response{OK: true, Running: &running}, nil
+	}}
+	manager := NewWithClient(client, statePath, logging.New(20), network.NewStore())
+	start := time.Now().UTC()
+	manager.status = Status{State: "disconnecting", StartedAt: &start}
+
+	manager.finishDisconnect(&start, "", false, 30*time.Millisecond)
+
+	status := manager.Status()
+	if status.State != "disconnecting" || status.LastError == "" {
+		t.Fatalf("status = %#v, want blocking disconnecting state with error", status)
+	}
+}
+
+func TestConnectionFailureStopsProcessBeforeSettlingInError(t *testing.T) {
+	operations := make(chan string, 4)
+	running := false
+	client := privileged.Client{
+		DoFunc: func(request privileged.Request) error {
+			operations <- request.Operation
+			return nil
+		},
+		QueryFunc: func(request privileged.Request) (privileged.Response, error) {
+			operations <- request.Operation
+			return privileged.Response{OK: true, Running: &running, Recovered: &running}, nil
+		},
+	}
+	manager := NewWithClient(client, "", logging.New(20), network.NewStore())
+	start := time.Now().UTC()
+	manager.status = Status{State: "connecting", StartedAt: &start}
+
+	manager.failAndCleanup(start, "connection setup failed")
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		status := manager.Status()
+		if status.State == "error" {
+			if status.LastError != "connection setup failed" {
+				t.Fatalf("status = %#v", status)
+			}
+			if operation := <-operations; operation != "disconnect" {
+				t.Fatalf("first operation = %q, want disconnect", operation)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("status did not settle in error: %#v", manager.Status())
 }
 
 func TestSavedRouteOverridesApplyAfterServerRoutes(t *testing.T) {

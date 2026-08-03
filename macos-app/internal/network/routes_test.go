@@ -4,7 +4,7 @@ import "testing"
 
 func TestRuntimeRouteCRUD(t *testing.T) {
 	s := NewStore()
-	s.AddServer("10.1.2.3/8")
+	s.AddServerWithSource("10.1.2.3/8", "server")
 	routes := s.List()
 	if len(routes) != 1 || routes[0].CIDR != "10.0.0.0/8" || routes[0].Source != "server" {
 		t.Fatalf("server route: %#v", routes)
@@ -42,7 +42,7 @@ func TestRejectsUnsafeAndDuplicateRoutes(t *testing.T) {
 
 func TestClearRemovesServerRoutesAndUserOverrides(t *testing.T) {
 	s := NewStore()
-	s.AddServer("10.0.0.0/8")
+	s.AddServerWithSource("10.0.0.0/8", "server")
 	if _, err := s.Add("192.168.0.0/16"); err != nil {
 		t.Fatal(err)
 	}

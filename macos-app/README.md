@@ -14,7 +14,10 @@ the upstream OpenConnect C build.
 - profile create/read/update/delete API;
 - root-only helper with an allow-listed Unix-socket protocol;
 - managed OpenConnect lifecycle inside the helper;
+- disconnect completion only after both OpenConnect exit and `vpnc-script` state-file removal, with explicit recovery from stale network state;
+- desktop-only AnyConnect user-agent and compression defaults passed by the helper, leaving the upstream CLI defaults unchanged;
 - automatic OpenConnect reconnect and route refresh after macOS wake;
+- advisory DNS/TCP server probing for fallback selection that never blocks an OpenConnect attempt;
 - post-`vpnc-script` route capture from `CISCO_SPLIT_INC/EXC` and `TUNDEV`;
 - system route add/delete/replace, with replace rollback on failure;
 - system PAC proxy snapshot, apply, and restore on disconnect;
@@ -28,8 +31,7 @@ the upstream OpenConnect C build.
 - connection inspector with staged DNS/TCP, TLS, authentication, posture, tunnel, UDP, and route state;
 - automatic DNS, TCP, TLS certificate, tunnel, route, and posture diagnostics after every successful connection;
 - Posture/HostScan center with request detection and captured payload size and SHA-256 metadata;
-- `.app` and `.dmg` packaging scripts;
-- placeholder helper binary whose interface deliberately accepts no commands.
+- `.app` and `.dmg` packaging scripts.
 
 ## Run the prototype
 
@@ -41,8 +43,8 @@ The one-time bootstrap URL is printed on startup and opened in the default brows
 opens the token-free portal URL and relies on the existing browser session. The portal
 requests both the account password and OTP for each connection. Both are passed
 to OpenConnect through stdin and immediately discarded. Fully dynamic auth
-forms (group selection, password changes, banners, and browser SAML) and the
-privileged helper remain release-critical work for the next milestone.
+forms (group selection, password changes, banners, and browser SAML) remain
+release-critical work for the next milestone.
 
 Route edits are kept in memory for the active connection and are applied by the
 root helper only after the real `vpnc-script` has successfully installed the
@@ -86,4 +88,4 @@ go vet ./...
 
 Unit tests cover profile persistence, restrictive permissions, runtime route
 validation and capture, portal sessions, CSRF, Host validation, log retention, secret
-redaction, and diagnostic archive generation.
+redaction, diagnostic archive generation, and the process-plus-state-file cleanup invariant.

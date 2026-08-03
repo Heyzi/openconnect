@@ -1874,14 +1874,6 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/* Match the corporate AnyConnect-compatible client by default.  These are
-	 * defaults only; the normal option parser below may override either one. */
-	if (openconnect_set_useragent(vpninfo, "Open AnyConnect VPN Agent") ||
-	    openconnect_set_compression_mode(vpninfo, OC_COMPRESSION_MODE_NONE)) {
-		fprintf(stderr, _("Failed to set corporate client defaults\n"));
-		exit(1);
-	}
-
 	vpninfo->cbdata = vpninfo;
 #ifdef _WIN32
 	set_default_vpncscript();

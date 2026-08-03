@@ -155,9 +155,6 @@ func (s *Store) Delete(routeID string) error {
 	}
 	return osNotExist
 }
-func (s *Store) AddServer(cidr string) {
-	s.AddServerWithSource(cidr, "server")
-}
 func (s *Store) AddServerWithSource(cidr, source string) {
 	canonicalCIDR, e := canonical(cidr)
 	if e != nil {

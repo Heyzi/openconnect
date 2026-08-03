@@ -81,6 +81,7 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("/api/v1/status", method("GET", s.status))
 	m.HandleFunc("/api/v1/connect", method("POST", s.connect))
 	m.HandleFunc("/api/v1/disconnect", method("POST", s.disconnect))
+	m.HandleFunc("/api/v1/recover", method("POST", s.recover))
 	m.HandleFunc("/api/v1/profiles", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			s.listProfiles(w, r)
@@ -428,15 +429,15 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		s.logs.Add("Error", "Connectivity", err.Error())
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	if server != p.Server {
-		s.logs.Add("Warning", "Connectivity", "using fallback VPN server "+server)
+		s.logs.Add("Warning", "Connectivity", err.Error()+"; letting OpenConnect try the primary server")
+		server = p.Server
+	} else {
+		if server != p.Server {
+			s.logs.Add("Warning", "Connectivity", "using fallback VPN server "+server)
+		}
+		s.logs.Add("Info", "Connectivity", "VPN server "+server+" is reachable")
 	}
 	p.Server, p.FallbackServers = server, nil
-	s.logs.Add("Info", "Connectivity", "VPN server "+server+" is reachable")
 	// A captured posture payload belongs to exactly one connection attempt.
 	// Remove the previous session's file so the inspector cannot attribute stale
 	// HostScan data to the new VPN session.
@@ -511,6 +512,13 @@ func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(204)
+}
+func (s *Server) recover(w http.ResponseWriter, r *http.Request) {
+	if err := s.vpn.Recover(); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 func (s *Server) listProfiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.profiles.List())

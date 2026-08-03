@@ -210,7 +210,7 @@ func (s *Server) connect(in *ConnectRequest) error {
 }
 
 func (s *Server) openConnectArgs(in *ConnectRequest) []string {
-	args := []string{"--protocol", in.Protocol, "--passwd-on-stdin", "--script", shellQuote(s.Hook)}
+	args := []string{"--protocol", in.Protocol, "--passwd-on-stdin", "--script", shellQuote(s.Hook), "--useragent", "Open AnyConnect VPN Agent", "--compression", "none"}
 	if in.Verbose {
 		args = append(args, "--dump-http-traffic", "-vvv")
 	}
