@@ -7,8 +7,15 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     private let statusPath: String
     private let buildCommit: String
     private var timer: Timer?
-    private var downloadItem: NSMenuItem!
-    private var uploadItem: NSMenuItem!
+    private var disconnectItem: NSMenuItem!
+    private var sessionCookie: String?
+    private var csrfToken: String?
+    private lazy var origin: URL = {
+        var components = URLComponents(url: portalURL, resolvingAgainstBaseURL: false)!
+        components.path = ""
+        components.query = nil
+        return components.url!
+    }()
 
     init(portalURL: URL, agentPID: Int32, statusPath: String, buildCommit: String) {
         self.portalURL = portalURL
@@ -32,15 +39,11 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         let versionItem = NSMenuItem(title: "Version \(version) · build \(buildCommit)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
-        downloadItem = NSMenuItem(title: "Download —", action: nil, keyEquivalent: "")
-        downloadItem.isEnabled = false
-        downloadItem.isHidden = true
-        menu.addItem(downloadItem)
-        uploadItem = NSMenuItem(title: "Upload —", action: nil, keyEquivalent: "")
-        uploadItem.isEnabled = false
-        uploadItem.isHidden = true
-        menu.addItem(uploadItem)
         menu.addItem(.separator())
+        disconnectItem = NSMenuItem(title: "Disconnect", action: #selector(disconnect), keyEquivalent: "")
+        disconnectItem.target = self
+        disconnectItem.isHidden = true
+        menu.addItem(disconnectItem)
         menu.addItem(withTitle: "Open Portal", action: #selector(openPortal), keyEquivalent: "o").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
@@ -62,23 +65,44 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         switch state { case "connected": color = .systemGreen; case "connecting", "disconnecting": color = .systemOrange; case "error": color = .systemRed; default: color = .labelColor }
         statusItem.button?.image = statusIcon(color: color)
         statusItem.button?.toolTip = "OpenConnect Desktop — \(state)"
-        if let traffic = object["traffic"] as? [String: Any] {
-            let downloaded = (traffic["downloadBytes"] as? NSNumber)?.uint64Value ?? 0
-            let uploaded = (traffic["uploadBytes"] as? NSNumber)?.uint64Value ?? 0
-            let downloadRate = (traffic["downloadBytesPerSec"] as? NSNumber)?.uint64Value ?? 0
-            let uploadRate = (traffic["uploadBytesPerSec"] as? NSNumber)?.uint64Value ?? 0
-            downloadItem.title = "Download  \(formatBytes(downloaded)) · \(formatBytes(downloadRate))/s"
-            uploadItem.title = "Upload       \(formatBytes(uploaded)) · \(formatBytes(uploadRate))/s"
-            downloadItem.isHidden = false
-            uploadItem.isHidden = false
-        } else {
-            downloadItem.isHidden = true
-            uploadItem.isHidden = true
-        }
+        disconnectItem.isHidden = !["connected", "connecting"].contains(state)
     }
 
-    private func formatBytes(_ value: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: value), countStyle: .decimal)
+    private func ensureSession(_ completion: @escaping (Bool) -> Void) {
+        if sessionCookie != nil, csrfToken != nil { completion(true); return }
+        URLSession.shared.dataTask(with: portalURL) { [weak self] _, response, _ in
+            guard let self,
+                  let http = response as? HTTPURLResponse,
+                  let setCookie = http.value(forHTTPHeaderField: "Set-Cookie"),
+                  let cookie = setCookie.split(separator: ";").first else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            self.sessionCookie = String(cookie)
+            var request = URLRequest(url: self.origin.appendingPathComponent("api/v1/session"))
+            request.setValue(self.sessionCookie, forHTTPHeaderField: "Cookie")
+            URLSession.shared.dataTask(with: request) { data, _, _ in
+                guard let data,
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let csrf = object["csrfToken"] as? String else {
+                    DispatchQueue.main.async { completion(false) }
+                    return
+                }
+                self.csrfToken = csrf
+                DispatchQueue.main.async { completion(true) }
+            }.resume()
+        }.resume()
+    }
+
+    @objc private func disconnect() {
+        ensureSession { [weak self] ok in
+            guard ok, let self else { return }
+            var request = URLRequest(url: self.origin.appendingPathComponent("api/v1/disconnect"))
+            request.httpMethod = "POST"
+            request.setValue(self.sessionCookie, forHTTPHeaderField: "Cookie")
+            request.setValue(self.csrfToken, forHTTPHeaderField: "X-CSRF-Token")
+            URLSession.shared.dataTask(with: request).resume()
+        }
     }
 
     private func statusIcon(color: NSColor) -> NSImage {

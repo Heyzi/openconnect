@@ -5,7 +5,13 @@ const escapeHTML = value => { const node = document.createElement('div'); node.t
 const escapeAttr = value => escapeHTML(value).replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const duration = startedAt => { if(!startedAt)return '';const seconds=Math.max(0,Math.floor((Date.now()-new Date(startedAt).getTime())/1000));const h=String(Math.floor(seconds/3600)).padStart(2,'0'),m=String(Math.floor(seconds%3600/60)).padStart(2,'0'),s=String(seconds%60).padStart(2,'0');return `${h}:${m}:${s}` };
 const formatBytes = value => { const units=['B','KB','MB','GB','TB'];let amount=Math.max(0,Number(value)||0),unit=0;while(amount>=1000&&unit<units.length-1){amount/=1000;unit++}return `${amount.toFixed(unit===0?0:1)} ${units[unit]}` };
-const trafficSummary = status => status.traffic ? `${status.state} · ↓ ${formatBytes(status.traffic.downloadBytes)} (${formatBytes(status.traffic.downloadBytesPerSec)}/s) · ↑ ${formatBytes(status.traffic.uploadBytes)} (${formatBytes(status.traffic.uploadBytesPerSec)}/s)` : status.state;
+function renderTraffic(traffic) {
+  const chip = $('#traffic');
+  chip.hidden = !traffic;
+  if (!traffic) return;
+  chip.innerHTML = `<span class="rate down">↓${formatBytes(traffic.downloadBytesPerSec)}/s</span><span class="rate up">↑${formatBytes(traffic.uploadBytesPerSec)}/s</span>`;
+  chip.title = `${formatBytes(traffic.downloadBytes)} downloaded · ${formatBytes(traffic.uploadBytes)} uploaded`;
+}
 const parseRoutes = value => value.split(/[\s,]+/).map(x=>x.trim()).filter(Boolean);
 async function req(path, options = {}) { options.headers = {...options.headers, 'X-CSRF-Token': csrf}; const response = await fetch(path, options); if (!response.ok) throw new Error(await response.text()); return response.status === 204 ? null : response.json() }
 function showStatusError(message, recoverable) { $('#lastError').textContent=message||'';$('#statusError').hidden=!message;$('#recover').hidden=!recoverable }
@@ -15,7 +21,7 @@ async function refreshOnce() {
   currentStatus = status;
   if (!selected && profiles.length) { selected = profiles[0].id; await loadRoutes() }
   $('#openServerScripts').hidden = !(profiles.find(p => p.id === selected)?.saveServerScripts);
-  $('#state').textContent = trafficSummary(status); $('#state').className = 'status-pill ' + status.state; $('#statusMark').className = 'mark ' + status.state;
+  $('#state').textContent = status.state; $('#state').className = 'status-pill ' + status.state; $('#statusMark').className = 'mark ' + status.state; renderTraffic(status.traffic);
   showStatusError(status.lastError, !!status.lastError);
   const busy = ['connecting','connected','disconnecting'].includes(status.state);
   $('#profiles').innerHTML = profiles.map(p => { const id=escapeAttr(p.id),active=p.id===status.profileId,backups=(p.fallbackServers||[]).length; const connected=active&&status.state==='connected'; const pending=active&&status.state==='connecting'; return `<div class="profile ${p.id===selected?'selected':''} ${connected?'active':''}" data-select="${id}" tabindex="0" role="group" aria-label="${escapeAttr(p.name)} VPN profile"><div class="profile-copy"><div class="profile-name-row"><b>${escapeHTML(p.name)}</b><span class="profile-protocol">${escapeHTML(p.protocol||'anyconnect')}</span></div><p>${escapeHTML(p.server)}${backups?` · +${backups} fallback`:''}</p></div><div class="profile-connection ${connected?'connected':pending?'pending':'idle'}"><i></i><span>${connected?`Connected · <span data-uptime>${duration(status.startedAt)}</span>`:pending?'Connecting…':'Ready'}</span></div><div class="profile-actions">${active&&busy?`<button class="ghost" data-disconnect>Disconnect</button>`:`<button data-connect="${id}" ${busy?'disabled':''}>Connect</button>`}<button class="ghost" data-edit="${id}" title="Edit profile">Edit</button><button class="delete-profile ghost danger" data-profile-delete="${id}" data-profile-name="${escapeAttr(p.name)}" ${active&&busy?'disabled':''} title="Delete profile">Delete</button></div></div>` }).join('') || '<p class="empty-state">No profiles yet. Add one to connect.</p>';
