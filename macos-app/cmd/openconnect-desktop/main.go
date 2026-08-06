@@ -106,6 +106,7 @@ func main() {
 	signal.Notify(wake, syscall.SIGUSR1)
 	go func() {
 		for range wake {
+			vpn.NotifyWake()
 			time.Sleep(2 * time.Second)
 			if wakeErr := vpn.ReconnectAfterWake(); wakeErr != nil {
 				logs.Add("Warning", "Wake Recovery", wakeErr.Error())

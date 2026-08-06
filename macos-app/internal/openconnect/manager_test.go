@@ -94,6 +94,30 @@ func TestProcessWatcherIgnoresTransientHelperFailure(t *testing.T) {
 	}
 }
 
+func TestProcessWatcherIgnoresDeathDuringWakeGrace(t *testing.T) {
+	running := false
+	client := privileged.Client{
+		DoFunc: func(privileged.Request) error { t.Fatal("failAndCleanup should not run during wake grace"); return nil },
+		QueryFunc: func(request privileged.Request) (privileged.Response, error) {
+			return privileged.Response{OK: true, Running: &running, LastExit: "exit status 1"}, nil
+		},
+	}
+	manager := NewWithClient(client, "", logging.New(20), network.NewStore())
+	start := time.Now().UTC()
+	manager.status = Status{State: "connected", StartedAt: &start}
+	manager.NotifyWake()
+	go manager.watchProcess(start)
+	t.Cleanup(func() {
+		manager.mu.Lock()
+		manager.status = Status{State: "disconnected"}
+		manager.mu.Unlock()
+	})
+	time.Sleep(1100 * time.Millisecond)
+	if status := manager.Status(); status.State != "connected" {
+		t.Fatalf("status = %#v, want connected", status)
+	}
+}
+
 func TestWakeReconnectRefreshesRoutes(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")

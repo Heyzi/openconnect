@@ -33,6 +33,19 @@ type Manager struct {
 	routes    *network.Store
 	status    Status
 	profile   profiles.Profile
+	wokeAt    time.Time
+}
+
+// wakeGracePeriod covers the brief window after a system wake where the
+// privileged helper's socket or the network stack may still be resuming;
+// without it watchProcess can mistake that hiccup for a dead process and
+// tear down a session that ReconnectAfterWake would otherwise have revived.
+const wakeGracePeriod = 3 * time.Second
+
+func (m *Manager) NotifyWake() {
+	m.mu.Lock()
+	m.wokeAt = time.Now()
+	m.mu.Unlock()
 }
 type scriptState struct {
 	TunnelDevice string    `json:"tunnelDevice"`
@@ -141,6 +154,12 @@ func (m *Manager) watchProcess(start time.Time) {
 			helperFailures = 0
 		}
 		if response.Running != nil && *response.Running {
+			continue
+		}
+		m.mu.RLock()
+		recentWake := time.Since(m.wokeAt) < wakeGracePeriod
+		m.mu.RUnlock()
+		if recentWake {
 			continue
 		}
 		reason := "OpenConnect exited unexpectedly"
