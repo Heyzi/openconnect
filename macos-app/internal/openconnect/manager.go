@@ -3,6 +3,8 @@ package openconnect
 import (
 	"encoding/json"
 	"errors"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ type Status struct {
 	ProfileID   string        `json:"profileId,omitempty"`
 	ProfileName string        `json:"profileName,omitempty"`
 	Server      string        `json:"server,omitempty"`
+	ServerIP    string        `json:"serverIP,omitempty"`
 	LastError   string        `json:"lastError,omitempty"`
 	StartedAt   *time.Time    `json:"startedAt,omitempty"`
 	Traffic     *TrafficStats `json:"traffic,omitempty"`
@@ -46,6 +49,20 @@ func (m *Manager) NotifyWake() {
 	m.mu.Lock()
 	m.wokeAt = time.Now()
 	m.mu.Unlock()
+}
+func resolveServerIP(server string) string {
+	u, err := url.Parse(server)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	if net.ParseIP(u.Hostname()) != nil {
+		return u.Hostname()
+	}
+	addrs, err := net.LookupHost(u.Hostname())
+	if err != nil || len(addrs) == 0 {
+		return ""
+	}
+	return addrs[0]
 }
 type scriptState struct {
 	TunnelDevice string    `json:"tunnelDevice"`
@@ -78,13 +95,19 @@ func (m *Manager) Connect(p profiles.Profile, credentials Credentials) error {
 		return errors.New("a VPN connection is already active")
 	}
 	m.mu.Unlock()
+	// Resolved before the tunnel comes up: vpnc-script replaces the system
+	// DNS servers with the ones the gateway pushes, which often can't resolve
+	// the gateway's own public hostname (split-horizon DNS). Diagnostics runs
+	// while connected reuse this address instead of re-resolving through DNS
+	// that no longer serves it.
+	serverIP := resolveServerIP(p.Server)
 	request := privileged.Request{Operation: "connect", Connect: &privileged.ConnectRequest{Server: p.Server, Protocol: p.Protocol, Username: p.Username, Group: p.Group, Password: credentials.Password, OTP: credentials.OTP, Verbose: p.Verbose, SaveServerScripts: p.SaveServerScripts, MACAddress: p.MACAddress}}
 	if err := m.helper.Do(request); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
 	m.mu.Lock()
-	m.status = Status{State: "connecting", ProfileID: p.ID, ProfileName: p.Name, Server: p.Server, StartedAt: &now}
+	m.status = Status{State: "connecting", ProfileID: p.ID, ProfileName: p.Name, Server: p.Server, ServerIP: serverIP, StartedAt: &now}
 	m.profile = p
 	m.mu.Unlock()
 	m.routes.ClearServer()

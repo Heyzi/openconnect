@@ -44,10 +44,16 @@ func (s *Server) runDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := s.vpn.Status()
-	if status.ProfileID == p.ID && status.Server != "" {
-		p.Server = status.Server
+	pinnedIP := ""
+	if status.ProfileID == p.ID {
+		if status.Server != "" {
+			p.Server = status.Server
+		}
+		if status.State == "connected" {
+			pinnedIP = status.ServerIP
+		}
 	}
-	report := diagnose(p, status.State, len(s.network.List()), capturePath())
+	report := diagnose(p, status.State, len(s.network.List()), capturePath(), pinnedIP)
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -62,7 +68,7 @@ func (s *Server) diagnosticProfile(id string) (profiles.Profile, bool) {
 	return profiles.Profile{}, false
 }
 
-func diagnose(profile profiles.Profile, vpnState string, routeCount int, posturePath string) diagnosticReport {
+func diagnose(profile profiles.Profile, vpnState string, routeCount int, posturePath string, pinnedIP string) diagnosticReport {
 	report := diagnosticReport{RanAt: time.Now().UTC(), Server: profile.Server, Overall: "pass"}
 	add := func(id, name, status, detail string, started time.Time) {
 		report.Checks = append(report.Checks, diagnosticCheck{ID: id, Name: name, Status: status, Detail: detail, DurationMS: time.Since(started).Milliseconds()})
@@ -85,13 +91,23 @@ func diagnose(profile profiles.Profile, vpnState string, routeCount int, posture
 	endpoint := net.JoinHostPort(host, port)
 
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	addresses, lookupErr := net.DefaultResolver.LookupHost(ctx, host)
-	cancel()
-	if lookupErr != nil {
-		add("dns", "DNS resolution", "fail", lookupErr.Error(), started)
+	if pinnedIP != "" {
+		// While connected, vpnc-script has replaced the system DNS servers with
+		// the gateway's, which usually can't resolve the gateway's own public
+		// hostname (split-horizon DNS). Reuse the address resolved before the
+		// tunnel came up instead of re-resolving through DNS that no longer
+		// serves it.
+		add("dns", "DNS resolution", "pass", "Using address pinned at connect time: "+pinnedIP, started)
+		endpoint = net.JoinHostPort(pinnedIP, port)
 	} else {
-		add("dns", "DNS resolution", "pass", strings.Join(addresses, ", "), started)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		addresses, lookupErr := net.DefaultResolver.LookupHost(ctx, host)
+		cancel()
+		if lookupErr != nil {
+			add("dns", "DNS resolution", "fail", lookupErr.Error(), started)
+		} else {
+			add("dns", "DNS resolution", "pass", strings.Join(addresses, ", "), started)
+		}
 	}
 
 	started = time.Now()

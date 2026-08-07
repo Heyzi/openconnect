@@ -284,6 +284,18 @@ func TestConnectionFailureStopsProcessBeforeSettlingInError(t *testing.T) {
 	t.Fatalf("status did not settle in error: %#v", manager.Status())
 }
 
+func TestResolveServerIPPassesThroughLiteralIP(t *testing.T) {
+	if got := resolveServerIP("https://192.0.2.1:8443"); got != "192.0.2.1" {
+		t.Fatalf("resolveServerIP = %q, want 192.0.2.1", got)
+	}
+}
+
+func TestResolveServerIPRejectsInvalidURL(t *testing.T) {
+	if got := resolveServerIP("::not a url::"); got != "" {
+		t.Fatalf("resolveServerIP = %q, want empty", got)
+	}
+}
+
 func TestSavedRouteOverridesApplyAfterServerRoutes(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
