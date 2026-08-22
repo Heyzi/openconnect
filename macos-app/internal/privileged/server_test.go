@@ -11,7 +11,7 @@ func TestVerboseOpenConnectArguments(t *testing.T) {
 	in := &ConnectRequest{Protocol: "anyconnect", Verbose: true, MACAddress: "02:00:00:00:00:01", Server: "https://vpn.example"}
 	hook := "/Applications/OpenConnect Desktop.app/Contents/Resources/bin/openconnect-script-hook"
 	args := (&Server{Hook: hook}).openConnectArgs(in)
-	want := []string{"--protocol", "anyconnect", "--passwd-on-stdin", "--script", "'/Applications/OpenConnect Desktop.app/Contents/Resources/bin/openconnect-script-hook'", "--useragent", "Open AnyConnect VPN Agent", "--compression", "none", "--dump-http-traffic", "-vvv", "--mac-address", "02:00:00:00:00:01", "https://vpn.example"}
+	want := []string{"--protocol", "anyconnect", "--passwd-on-stdin", "--script", "'/Applications/OpenConnect Desktop.app/Contents/Resources/bin/openconnect-script-hook'", "--useragent", "Open AnyConnect VPN Agent", "--compression", "none", "--reconnect-timeout", "3600", "--dump-http-traffic", "-vvv", "--mac-address", "02:00:00:00:00:01", "https://vpn.example"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("arguments = %#v, want %#v", args, want)
 	}
@@ -65,6 +65,21 @@ func TestStatusReportsWhetherOpenConnectIsRunning(t *testing.T) {
 	}
 	if response.LastExit != "exit status 1" {
 		t.Fatalf("LastExit = %q", response.LastExit)
+	}
+}
+
+func TestRouteScope(t *testing.T) {
+	cases := map[string]string{
+		"176.109.96.27/32":       "-host",
+		"64:ff9b::b06d:601b/128": "-host",
+		"10.0.0.0/24":            "-net",
+		"fd00::/64":              "-net",
+		"not-a-cidr":             "-net",
+	}
+	for cidr, want := range cases {
+		if got := routeScope(cidr); got != want {
+			t.Errorf("routeScope(%q) = %q, want %q", cidr, got, want)
+		}
 	}
 }
 

@@ -127,6 +127,9 @@ func (s *Server) execute(req Request, response *Response) error {
 		return errors.New("operation is not allowed")
 	}
 }
+
+var macAddress = regexp.MustCompile(`(?i)^[0-9a-f]{2}([-:][0-9a-f]{2}){5}$`)
+
 func (s *Server) connect(in *ConnectRequest) error {
 	if in == nil {
 		return errors.New("invalid connect request")
@@ -146,7 +149,7 @@ func (s *Server) connect(in *ConnectRequest) error {
 		return e
 	}
 	s.lastExit = ""
-	if in.MACAddress != "" && !regexp.MustCompile(`(?i)^[0-9a-f]{2}([-:][0-9a-f]{2}){5}$`).MatchString(in.MACAddress) {
+	if in.MACAddress != "" && !macAddress.MatchString(in.MACAddress) {
 		return errors.New("invalid MAC address")
 	}
 	args := s.openConnectArgs(in)
@@ -209,8 +212,14 @@ func (s *Server) connect(in *ConnectRequest) error {
 	return nil
 }
 
+// reconnectTimeout keeps OpenConnect retrying with its existing session
+// cookie for an hour instead of the 300s default. Reconnects reuse the
+// gateway token, so surviving a long sleep or a network change costs nothing,
+// while a process exit forces a fresh password and OTP login.
+const reconnectTimeout = "3600"
+
 func (s *Server) openConnectArgs(in *ConnectRequest) []string {
-	args := []string{"--protocol", in.Protocol, "--passwd-on-stdin", "--script", shellQuote(s.Hook), "--useragent", "Open AnyConnect VPN Agent", "--compression", "none"}
+	args := []string{"--protocol", in.Protocol, "--passwd-on-stdin", "--script", shellQuote(s.Hook), "--useragent", "Open AnyConnect VPN Agent", "--compression", "none", "--reconnect-timeout", reconnectTimeout}
 	if in.Verbose {
 		args = append(args, "--dump-http-traffic", "-vvv")
 	}
@@ -250,6 +259,22 @@ func validCIDR(cidr string) error {
 	_, _, e := net.ParseCIDR(cidr)
 	return e
 }
+
+// routeScope reports the BSD route(8) scope flag ("-host" or "-net") for cidr.
+// A stale /32 or /128 route left in the table by a previous VPN session is
+// recorded as a host route, and "route delete -net" silently fails to match
+// it ("not in table"), leaving the dead route in place.
+func routeScope(cidr string) string {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "-net"
+	}
+	ones, bits := ipnet.Mask.Size()
+	if ones == bits {
+		return "-host"
+	}
+	return "-net"
+}
 func (s *Server) tunnelDevice() (string, error) {
 	b, e := os.ReadFile(s.StatePath)
 	if e != nil {
@@ -286,7 +311,7 @@ func (s *Server) routeDelete(in *RouteRequest) error {
 	if e := validCIDR(in.CIDR); e != nil {
 		return e
 	}
-	return exec.Command("/sbin/route", "-n", "delete", "-net", in.CIDR).Run()
+	return exec.Command("/sbin/route", "-n", "delete", routeScope(in.CIDR), in.CIDR).Run()
 }
 func (s *Server) routeReplace(in *RouteRequest) error {
 	if in == nil {
@@ -302,7 +327,7 @@ func (s *Server) routeReplace(in *RouteRequest) error {
 	if e != nil {
 		return e
 	}
-	if e = exec.Command("/sbin/route", "-n", "delete", "-net", in.PreviousCIDR).Run(); e != nil {
+	if e = exec.Command("/sbin/route", "-n", "delete", routeScope(in.PreviousCIDR), in.PreviousCIDR).Run(); e != nil {
 		return e
 	}
 	if e = runRoute("add", in.CIDR, device); e != nil {

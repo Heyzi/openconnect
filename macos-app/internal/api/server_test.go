@@ -111,37 +111,6 @@ func TestConnectLetsOpenConnectDetermineServerAvailability(t *testing.T) {
 	}
 }
 
-func TestRecoverEndpointRequestsCleanup(t *testing.T) {
-	s := testServer(t)
-	operations := make(chan string, 4)
-	running := false
-	s.vpn = openconnect.NewWithClient(privileged.Client{
-		DoFunc: func(request privileged.Request) error {
-			operations <- request.Operation
-			return nil
-		},
-		QueryFunc: func(request privileged.Request) (privileged.Response, error) {
-			operations <- request.Operation
-			return privileged.Response{OK: true, Running: &running, Recovered: &running}, nil
-		},
-	}, filepath.Join(t.TempDir(), "state.json"), s.logs, s.network)
-	cookie := request(s, "GET", "/bootstrap?token="+s.bootstrap, "", nil, "").Result().Cookies()[0]
-
-	response := request(s, "POST", "/api/v1/recover", "", cookie, s.csrf)
-
-	if response.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
-	}
-	select {
-	case operation := <-operations:
-		if operation != "disconnect" {
-			t.Fatalf("first operation = %q, want disconnect", operation)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("recovery did not request cleanup")
-	}
-}
-
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
@@ -294,5 +263,19 @@ func TestRejectsForeignHostAndOrigin(t *testing.T) {
 	s.handler.ServeHTTP(w, r)
 	if w.Code != 403 {
 		t.Fatalf("foreign host status=%d", w.Code)
+	}
+}
+
+func TestRouteListHelpersDoNotMutateInput(t *testing.T) {
+	stored := []string{"10.0.0.0/8", "192.168.0.0/16"}
+	if got := removeValue(stored, "10.0.0.0/8"); len(got) != 1 || got[0] != "192.168.0.0/16" {
+		t.Fatalf("removeValue = %v", got)
+	}
+	if stored[0] != "10.0.0.0/8" || stored[1] != "192.168.0.0/16" {
+		t.Fatalf("removeValue mutated the caller's slice: %v", stored)
+	}
+	appendUnique(stored[:1], "172.16.0.0/12")
+	if stored[1] != "192.168.0.0/16" {
+		t.Fatalf("appendUnique overwrote the caller's slice: %v", stored)
 	}
 }

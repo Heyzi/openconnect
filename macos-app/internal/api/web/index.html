@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="app-header"><div class="brand"><span class="mark" id="statusMark" aria-hidden="true"></span><div><h1>OpenConnect</h1><p>Desktop · build <span id="buildCommit">unknown</span></p></div></div><div class="header-profiles" aria-label="VPN profiles"><div class="profile-scroll" id="profiles"></div><button id="new" class="ghost">+ Profile</button></div><div class="status-cluster"><span id="state" class="status-pill" aria-live="polite">Loading…</span><span id="traffic" class="traffic-chip" hidden></span><button id="logout" class="ghost danger">Log out</button></div></header>
-<aside id="statusError" class="status-error" role="alert" aria-live="polite" hidden><p id="lastError"></p><button id="recover">Restore network state</button></aside>
+<aside id="statusError" class="status-error" role="alert" aria-live="polite" hidden><p id="lastError"></p></aside>
 <main class="workspace">
   <section class="left-column-v2">
     <div class="routes-panel"><div class="title"><div><h2>Routes</h2><p class="hint">Active VPN and custom routes.</p></div><div class="actions route-add"><button id="exportRoutes" class="ghost">Export</button><input id="newRoute" aria-label="Route CIDR" placeholder="10.0.0.0/8"><button id="addRoute">Add</button></div></div><div id="routes"></div></div>

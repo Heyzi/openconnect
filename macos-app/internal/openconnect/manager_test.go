@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,23 +31,25 @@ func TestUnexpectedOpenConnectExitChangesConnectedStatusToError(t *testing.T) {
 			return privileged.Response{OK: true, Running: &running, LastExit: "exit status 1"}, nil
 		},
 	}
-	manager := NewWithClient(client, "", logging.New(20), network.NewStore())
+	logs := logging.New(20)
+	manager := NewWithClient(client, "", logs, network.NewStore())
 	start := time.Now().UTC()
 	manager.status = Status{State: "connected", StartedAt: &start}
 	go manager.watchProcess(start)
 
+	// Cleanup succeeds here, so the session settles back in a clean
+	// disconnected state and the reason survives only in the log.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		status := manager.Status()
-		if status.State == "error" {
-			if want := "OpenConnect exited unexpectedly: exit status 1"; status.LastError != want {
-				t.Fatalf("LastError = %q, want %q", status.LastError, want)
+		if manager.Status().State == "disconnected" {
+			if !logged(logs, "OpenConnect exited unexpectedly: exit status 1") {
+				t.Fatalf("exit reason was not logged: %#v", logs.Entries())
 			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("status did not change to error: %#v", manager.Status())
+	t.Fatalf("status did not settle back in disconnected: %#v", manager.Status())
 }
 
 func TestLogWatcherFlushesFinalLineAfterProcessExit(t *testing.T) {
@@ -261,7 +264,8 @@ func TestConnectionFailureStopsProcessBeforeSettlingInError(t *testing.T) {
 			return privileged.Response{OK: true, Running: &running, Recovered: &running}, nil
 		},
 	}
-	manager := NewWithClient(client, "", logging.New(20), network.NewStore())
+	logs := logging.New(20)
+	manager := NewWithClient(client, "", logs, network.NewStore())
 	start := time.Now().UTC()
 	manager.status = Status{State: "connecting", StartedAt: &start}
 
@@ -269,10 +273,9 @@ func TestConnectionFailureStopsProcessBeforeSettlingInError(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		status := manager.Status()
-		if status.State == "error" {
-			if status.LastError != "connection setup failed" {
-				t.Fatalf("status = %#v", status)
+		if manager.Status().State == "disconnected" {
+			if !logged(logs, "connection setup failed") {
+				t.Fatalf("failure reason was not logged: %#v", logs.Entries())
 			}
 			if operation := <-operations; operation != "disconnect" {
 				t.Fatalf("first operation = %q, want disconnect", operation)
@@ -281,7 +284,7 @@ func TestConnectionFailureStopsProcessBeforeSettlingInError(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("status did not settle in error: %#v", manager.Status())
+	t.Fatalf("status did not settle in disconnected: %#v", manager.Status())
 }
 
 func TestResolveServerIPPassesThroughLiteralIP(t *testing.T) {
@@ -342,4 +345,42 @@ func TestWaitForAppliedIgnoresBaselineState(t *testing.T) {
 	if len(got) != 1 || got[0].CIDR != "10.0.0.0/8" {
 		t.Fatalf("routes = %#v", got)
 	}
+}
+
+func TestFailedSessionRecoversAutomaticallyAndClearsTheError(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(statePath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	running := false
+	client := privileged.Client{
+		DoFunc: func(privileged.Request) error { return nil },
+		QueryFunc: func(request privileged.Request) (privileged.Response, error) {
+			if request.Operation == "recover" {
+				// The helper restores the pre-VPN state and removes the file.
+				_ = os.Remove(statePath)
+				recovered := true
+				return privileged.Response{OK: true, Recovered: &recovered}, nil
+			}
+			return privileged.Response{OK: true, Running: &running}, nil
+		},
+	}
+	manager := NewWithClient(client, statePath, logging.New(20), network.NewStore())
+	start := time.Now().UTC()
+	manager.status = Status{State: "disconnecting", StartedAt: &start}
+
+	manager.finishDisconnect(&start, "OpenConnect exited unexpectedly", true, 5*time.Second)
+
+	if status := manager.Status(); status.State != "disconnected" || status.LastError != "" {
+		t.Fatalf("status = %#v, want a clean disconnected state", status)
+	}
+}
+
+func logged(logs *logging.Buffer, substring string) bool {
+	for _, entry := range logs.Entries() {
+		if strings.Contains(entry.Message, substring) {
+			return true
+		}
+	}
+	return false
 }

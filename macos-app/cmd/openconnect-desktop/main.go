@@ -22,6 +22,7 @@ import (
 	"openconnect.local/desktop/internal/network"
 	"openconnect.local/desktop/internal/openconnect"
 	"openconnect.local/desktop/internal/platform"
+	"openconnect.local/desktop/internal/privileged"
 	"openconnect.local/desktop/internal/profiles"
 )
 
@@ -40,7 +41,7 @@ func main() {
 	home, err := os.UserHomeDir()
 	fatal(err)
 	data := filepath.Join(home, "Library", "Application Support", "OpenConnect Desktop")
-	captureDir := filepath.Join(os.TempDir(), fmt.Sprintf("openconnect-desktop-csd-%d", os.Getuid()))
+	captureDir := privileged.CaptureDir(os.Getuid())
 	_ = os.RemoveAll(captureDir)
 	if err = os.MkdirAll(captureDir, 0700); err != nil {
 		fatal(err)
@@ -107,7 +108,6 @@ func main() {
 	go func() {
 		for range wake {
 			vpn.NotifyWake()
-			time.Sleep(2 * time.Second)
 			if wakeErr := vpn.ReconnectAfterWake(); wakeErr != nil {
 				logs.Add("Warning", "Wake Recovery", wakeErr.Error())
 			}

@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,6 +25,7 @@ import (
 	"openconnect.local/desktop/internal/network"
 	"openconnect.local/desktop/internal/openconnect"
 	"openconnect.local/desktop/internal/platform"
+	"openconnect.local/desktop/internal/privileged"
 	"openconnect.local/desktop/internal/profiles"
 )
 
@@ -81,7 +81,6 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("/api/v1/status", method("GET", s.status))
 	m.HandleFunc("/api/v1/connect", method("POST", s.connect))
 	m.HandleFunc("/api/v1/disconnect", method("POST", s.disconnect))
-	m.HandleFunc("/api/v1/recover", method("POST", s.recover))
 	m.HandleFunc("/api/v1/profiles", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			s.listProfiles(w, r)
@@ -132,7 +131,7 @@ func (s *Server) routes(m *http.ServeMux) {
 }
 
 func serverScriptsDir() string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("openconnect-desktop-csd-%d", os.Getuid()))
+	return privileged.CaptureDir(os.Getuid())
 }
 func (s *Server) openServerScripts(w http.ResponseWriter, r *http.Request) {
 	if err := platform.OpenFolder(serverScriptsDir()); err != nil {
@@ -254,10 +253,12 @@ func appendUnique(values []string, value string) []string {
 			return values
 		}
 	}
-	return append(values, value)
+	return append(values[:len(values):len(values)], value)
 }
 func removeValue(values []string, value string) []string {
-	out := values[:0]
+	// A fresh slice: values is shared with the profile stored in the Store, so
+	// filtering in place would rewrite the Store's backing array.
+	out := make([]string, 0, len(values))
 	for _, current := range values {
 		if current != value {
 			out = append(out, current)
@@ -512,13 +513,6 @@ func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(204)
-}
-func (s *Server) recover(w http.ResponseWriter, r *http.Request) {
-	if err := s.vpn.Recover(); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	w.WriteHeader(http.StatusAccepted)
 }
 func (s *Server) listProfiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.profiles.List())

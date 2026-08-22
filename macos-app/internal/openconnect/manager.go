@@ -64,6 +64,7 @@ func resolveServerIP(server string) string {
 	}
 	return addrs[0]
 }
+
 type scriptState struct {
 	TunnelDevice string    `json:"tunnelDevice"`
 	Reason       string    `json:"reason"`
@@ -277,6 +278,16 @@ func (m *Manager) ReconnectAfterWake() error {
 	}
 	start, profile := *m.status.StartedAt, m.profile
 	m.mu.RUnlock()
+	// Wait for the physical network before nudging OpenConnect: a reconnect
+	// fired into a still-dead Wi-Fi only eats into --reconnect-timeout, and
+	// every attempt that fails brings the session closer to a process exit,
+	// which is what forces a fresh password/OTP login.
+	m.mu.RLock()
+	server, serverIP := m.status.Server, m.status.ServerIP
+	m.mu.RUnlock()
+	if !waitForGateway(server, serverIP, 2*time.Minute) {
+		m.logs.Add("Warning", "Wake Recovery", "VPN gateway is still unreachable; asking OpenConnect to reconnect anyway")
+	}
 	requestedAt := time.Now().UTC()
 	if err := m.helper.Do(privileged.Request{Operation: "reconnect"}); err != nil {
 		return err
@@ -293,6 +304,37 @@ func (m *Manager) ReconnectAfterWake() error {
 	go m.waitForApplied(start, profile, requestedAt)
 	return nil
 }
+
+// waitForGateway blocks until the gateway accepts a TCP connection, or the
+// timeout expires. The address pinned at connect time is preferred: while the
+// tunnel config is still in place the system DNS servers are the gateway's own
+// and usually cannot resolve its public hostname.
+func waitForGateway(server, pinnedIP string, timeout time.Duration) bool {
+	u, err := url.Parse(server)
+	if err != nil || u.Hostname() == "" {
+		return true
+	}
+	host, port := u.Hostname(), u.Port()
+	if pinnedIP != "" {
+		host = pinnedIP
+	}
+	if port == "" {
+		port = "443"
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, dialErr := net.DialTimeout("tcp", net.JoinHostPort(host, port), 3*time.Second)
+		if dialErr == nil {
+			_ = conn.Close()
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 func (m *Manager) applySavedRoutes(profile profiles.Profile) {
 	for _, cidr := range profile.RouteDeletions {
 		if route, found := m.routes.GetByCIDR(cidr); found {
@@ -330,20 +372,7 @@ func (m *Manager) Disconnect() error {
 	m.status.State = "disconnecting"
 	m.mu.Unlock()
 	m.logs.Add("Info", "OpenConnect", "disconnect requested through root helper")
-	go m.finishDisconnect(startedAt, "", false, 15*time.Second)
-	return nil
-}
-
-func (m *Manager) Recover() error {
-	if err := m.helper.Do(privileged.Request{Operation: "disconnect"}); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	startedAt := m.status.StartedAt
-	m.status.State = "disconnecting"
-	m.mu.Unlock()
-	m.logs.Add("Info", "OpenConnect", "network recovery requested through root helper")
-	go m.finishDisconnect(startedAt, "", true, 15*time.Second)
+	go m.finishDisconnect(startedAt, "", true, 30*time.Second)
 	return nil
 }
 
@@ -366,16 +395,18 @@ func (m *Manager) finishDisconnect(startedAt *time.Time, finalError string, reco
 	// The hook removes its state file only after the original vpnc-script has
 	// finished deleting routes and restoring the network configuration.
 	deadline := time.Now().Add(timeout)
-	recoveryRequested := false
+	nextRecovery := time.Now()
 	for time.Now().Before(deadline) {
 		stopped, stateRemoved := m.cleanupStatus()
 		if stopped && stateRemoved {
 			break
 		}
-		if recover && stopped && !stateRemoved && !recoveryRequested {
-			if _, recoverErr := m.helper.Query(privileged.Request{Operation: "recover"}); recoverErr == nil {
-				recoveryRequested = true
-			}
+		// Keep asking rather than trying once: the first attempt can run while
+		// vpnc-script is still tearing down, and there is no user-facing button
+		// left to retry it by hand.
+		if recover && stopped && !stateRemoved && !time.Now().Before(nextRecovery) {
+			_, _ = m.helper.Query(privileged.Request{Operation: "recover"})
+			nextRecovery = time.Now().Add(2 * time.Second)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -395,16 +426,15 @@ func (m *Manager) finishDisconnect(startedAt *time.Time, finalError string, reco
 		m.logs.Add("Error", "OpenConnect", message)
 		return
 	}
-	if finalError == "" {
-		m.status = Status{State: "disconnected"}
-	} else {
-		m.status.State = "error"
-		m.status.LastError = finalError
-		m.status.StartedAt = nil
-		m.status.Traffic = nil
-	}
+	// The tunnel is gone and the pre-VPN network state is back, so there is
+	// nothing left for the user to act on: report the failure in the log and
+	// leave the UI in a clean disconnected state instead of a sticky error.
+	m.status = Status{State: "disconnected"}
 	m.mu.Unlock()
 	m.routes.Clear()
+	if finalError != "" {
+		m.logs.Add("Info", "Network Recovery", "network state restored automatically after: "+finalError)
+	}
 	m.logs.Add("Info", "Routing", "VPN session routes cleared after vpnc-script cleanup")
 }
 
@@ -444,7 +474,7 @@ func (m *Manager) failAndCleanup(start time.Time, reason string) {
 	}
 	m.status.State = "disconnecting"
 	m.mu.Unlock()
-	go m.finishDisconnect(&start, reason, true, 15*time.Second)
+	go m.finishDisconnect(&start, reason, true, 30*time.Second)
 }
 
 func sameStart(left, right *time.Time) bool {

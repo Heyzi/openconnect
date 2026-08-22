@@ -33,7 +33,7 @@ func main() {
 		server.Hook = filepath.Join(resources, "bin", "openconnect-script-hook")
 		server.VPNCScript = filepath.Join(resources, "vpnc-script")
 		server.OwnerUID = consoleUID()
-		server.CaptureDir = filepath.Join(os.TempDir(), fmt.Sprintf("openconnect-desktop-csd-%d", server.OwnerUID))
+		server.CaptureDir = privileged.CaptureDir(server.OwnerUID)
 		server.ConfigID, err = privileged.ComponentID(executable, server.OpenConnect, server.Hook, server.VPNCScript)
 		if err != nil {
 			fatal(err)

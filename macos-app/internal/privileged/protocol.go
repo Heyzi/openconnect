@@ -95,3 +95,11 @@ func (c Client) Query(req Request) (Response, error) {
 	}
 	return response, nil
 }
+
+// CaptureDir is where OpenConnect writes the gateway posture payload. The
+// helper runs from launchd (no TMPDIR, so os.TempDir() is /tmp) while the app
+// runs in the user session (per-user /var/folders TMPDIR), so the location must
+// be spelled out instead of derived from os.TempDir() on both sides.
+func CaptureDir(uid int) string {
+	return fmt.Sprintf("/tmp/openconnect-desktop-csd-%d", uid)
+}
