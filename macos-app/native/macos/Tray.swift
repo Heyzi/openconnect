@@ -7,9 +7,12 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     private let statusPath: String
     private let buildCommit: String
     private var timer: Timer?
+    private var detailItem: NSMenuItem!
     private var disconnectItem: NSMenuItem!
+    private var copyServerItem: NSMenuItem!
     private var sessionCookie: String?
     private var csrfToken: String?
+    private var currentServer: String?
     private lazy var origin: URL = {
         var components = URLComponents(url: portalURL, resolvingAgainstBaseURL: false)!
         components.path = ""
@@ -40,10 +43,17 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         versionItem.isEnabled = false
         menu.addItem(versionItem)
         menu.addItem(.separator())
+        detailItem = NSMenuItem(title: "Disconnected", action: nil, keyEquivalent: "")
+        detailItem.isEnabled = false
+        menu.addItem(detailItem)
         disconnectItem = NSMenuItem(title: "Disconnect", action: #selector(disconnect), keyEquivalent: "")
         disconnectItem.target = self
         disconnectItem.isHidden = true
         menu.addItem(disconnectItem)
+        copyServerItem = NSMenuItem(title: "Copy Server Address", action: #selector(copyServerAddress), keyEquivalent: "")
+        copyServerItem.target = self
+        copyServerItem.isHidden = true
+        menu.addItem(copyServerItem)
         menu.addItem(withTitle: "Open Portal", action: #selector(openPortal), keyEquivalent: "o").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
@@ -65,20 +75,35 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         switch state { case "connected": color = .systemGreen; case "connecting", "disconnecting": color = .systemOrange; case "error": color = .systemRed; default: color = .labelColor }
         statusItem.button?.image = statusIcon(color: color)
         statusItem.button?.toolTip = "OpenConnect Desktop — \(state)"
-        disconnectItem.isHidden = !["connected", "connecting"].contains(state)
+        let active = ["connected", "connecting"].contains(state)
+        disconnectItem.isHidden = !active
+        copyServerItem.isHidden = !active
+        currentServer = object["server"] as? String
+        let profileName = object["profileName"] as? String
+        switch state {
+        case "error":
+            detailItem.title = (object["lastError"] as? String).map { "Error: \($0)" } ?? "Error"
+        case "connected", "connecting", "disconnecting":
+            detailItem.title = [profileName, state.capitalized].compactMap { $0 }.joined(separator: " — ")
+        default:
+            detailItem.title = "Disconnected"
+        }
     }
 
     private func ensureSession(_ completion: @escaping (Bool) -> Void) {
         if sessionCookie != nil, csrfToken != nil { completion(true); return }
-        URLSession.shared.dataTask(with: portalURL) { [weak self] _, response, _ in
+        // portalURL is the one-time /bootstrap?token=... link, which redirects to
+        // "/" after setting the session cookie. URLSession follows that redirect
+        // itself, so `response` here is the reply to "/" and never carries the
+        // Set-Cookie header — only HTTPCookieStorage, which URLSession populates
+        // from every response in the chain, still has it.
+        URLSession.shared.dataTask(with: portalURL) { [weak self] _, _, _ in
             guard let self,
-                  let http = response as? HTTPURLResponse,
-                  let setCookie = http.value(forHTTPHeaderField: "Set-Cookie"),
-                  let cookie = setCookie.split(separator: ";").first else {
+                  let cookie = HTTPCookieStorage.shared.cookies(for: self.origin)?.first(where: { $0.name == "oc_session" }) else {
                 DispatchQueue.main.async { completion(false) }
                 return
             }
-            self.sessionCookie = String(cookie)
+            self.sessionCookie = "\(cookie.name)=\(cookie.value)"
             var request = URLRequest(url: self.origin.appendingPathComponent("api/v1/session"))
             request.setValue(self.sessionCookie, forHTTPHeaderField: "Cookie")
             URLSession.shared.dataTask(with: request) { data, _, _ in
@@ -132,6 +157,11 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openPortal() { NSWorkspace.shared.open(portalURL) }
+    @objc private func copyServerAddress() {
+        guard let server = currentServer else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(server, forType: .string)
+    }
     @objc private func didWake() { kill(agentPID, SIGUSR1) }
     @objc private func quit() {
         kill(agentPID, SIGTERM)
