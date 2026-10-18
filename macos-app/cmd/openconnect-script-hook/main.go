@@ -58,11 +58,19 @@ func main() {
 		previous = State{AppliedAt: time.Now().UTC(), TunnelDevice: os.Getenv("TUNDEV"), DNS: snapshotDNS(), Proxies: snapshotProxies()}
 		writeState(statePath, previous)
 	}
-	cmd := exec.Command(script)
-	cmd.Env = os.Environ()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := runNetworkTransition(reason, previous.Reason, func(step string) error {
+		cmd := exec.Command(script)
+		cmd.Env = append(os.Environ(), "reason="+step)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		if step == "disconnect" && reason != "disconnect" {
+			restoreSystemState(previous)
+		}
+		return nil
+	}); err != nil {
 		if reason != "disconnect" && reason != "pre-init" {
 			restoreSystemState(previous)
 			_ = os.Remove(statePath)
@@ -82,10 +90,28 @@ func main() {
 		fatal("vpnc-script did not provide a valid utun device")
 	}
 	writeState(statePath, state)
-	if state.ProxyPAC != "" {
+	if (reason == "connect" || reason == "reconnect") && state.ProxyPAC != "" {
 		applyProxyPAC(state.Proxies, state.ProxyPAC)
 	}
 }
+
+func runNetworkTransition(reason, previousReason string, run func(string) error) error {
+	// Darwin's attempt-reconnect only adds a gateway route. EEXIST leaves
+	// stale routing in place. Tear down once, before TLS, keeping the process
+	// and session cookie alive. Repeated retries must not repeat teardown.
+	if reason == "attempt-reconnect" && previousReason != "attempt-reconnect" {
+		if err := run("disconnect"); err != nil {
+			return err
+		}
+	}
+	// Reapply only what we tore down. An unsolicited reconnect must not
+	// overwrite vpnc-script's original default-route backup with VPN routes.
+	if reason == "reconnect" && previousReason == "attempt-reconnect" {
+		return run("connect")
+	}
+	return run(reason)
+}
+
 func runtimeState(baseline State, reason, device, gateway, proxyPAC string, currentRoutes []Route) State {
 	return State{AppliedAt: baseline.AppliedAt, UpdatedAt: time.Now().UTC(), Reason: reason, TunnelDevice: device, Gateway: gateway, ProxyPAC: proxyPAC, Routes: currentRoutes, Proxies: baseline.Proxies, DNS: baseline.DNS}
 }

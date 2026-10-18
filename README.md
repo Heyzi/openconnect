@@ -19,6 +19,9 @@ OpenConnect is released under the [GNU Lesser Public License, version 2.1](https
 
 ## Documentation
 
+The macOS desktop application's architecture, connection lifecycle, recovery
+constraints, and validation commands are documented in [macos-app/README.md](macos-app/README.md).
+
 Documentation for OpenConnect is built from the `www/` directory in this repository, and lives in rendered form at [https://www.infradead.org/openconnect](https://www.infradead.org/openconnect).
 
 Commonly-sought documentation:

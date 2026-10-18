@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,6 +123,8 @@ func TestProcessWatcherIgnoresDeathDuringWakeGrace(t *testing.T) {
 }
 
 func TestWakeReconnectRefreshesRoutes(t *testing.T) {
+	defer func(previous time.Duration) { wakeSelfRecovery = previous }(wakeSelfRecovery)
+	wakeSelfRecovery = 50 * time.Millisecond
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
 	start := time.Now().UTC()
@@ -383,4 +386,34 @@ func logged(logs *logging.Buffer, substring string) bool {
 		}
 	}
 	return false
+}
+
+func TestWakeReconnectSkipsNudgeWhenOpenConnectRecoversItself(t *testing.T) {
+	defer func(previous time.Duration) { wakeSelfRecovery = previous }(wakeSelfRecovery)
+	wakeSelfRecovery = time.Second
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	start := time.Now().UTC()
+	var nudges int32
+	client := privileged.Client{DoFunc: func(privileged.Request) error {
+		atomic.AddInt32(&nudges, 1)
+		return nil
+	}}
+	manager := NewWithClient(client, statePath, logging.New(20), network.NewStore())
+	manager.status = Status{State: "connected", StartedAt: &start}
+
+	if err := manager.ReconnectAfterWake(); err != nil {
+		t.Fatal(err)
+	}
+	updated := time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)
+	if err := os.WriteFile(statePath, []byte(`{"updatedAt":"`+updated+`","reason":"reconnect","tunnelDevice":"utun9","routes":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if got := atomic.LoadInt32(&nudges); got != 0 {
+		t.Fatalf("reconnect requests = %d, want 0", got)
+	}
+	if status := manager.Status(); status.State != "connected" {
+		t.Fatalf("status = %#v, want connected", status)
+	}
 }

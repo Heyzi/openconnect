@@ -45,6 +45,11 @@ type Manager struct {
 // tear down a session that ReconnectAfterWake would otherwise have revived.
 const wakeGracePeriod = 3 * time.Second
 
+// wakeSelfRecovery is how long OpenConnect gets to re-establish the tunnel by
+// itself after a wake before we interrupt it with a reconnect request. One
+// failed SSL negotiation plus its 10s backoff fits inside this window.
+var wakeSelfRecovery = 45 * time.Second
+
 func (m *Manager) NotifyWake() {
 	m.mu.Lock()
 	m.wokeAt = time.Now()
@@ -289,9 +294,6 @@ func (m *Manager) ReconnectAfterWake() error {
 		m.logs.Add("Warning", "Wake Recovery", "VPN gateway is still unreachable; asking OpenConnect to reconnect anyway")
 	}
 	requestedAt := time.Now().UTC()
-	if err := m.helper.Do(privileged.Request{Operation: "reconnect"}); err != nil {
-		return err
-	}
 	m.mu.Lock()
 	if m.status.StartedAt == nil || !m.status.StartedAt.Equal(start) || m.status.State != "connected" {
 		m.mu.Unlock()
@@ -300,9 +302,46 @@ func (m *Manager) ReconnectAfterWake() error {
 	m.status.State, m.status.Traffic = "connecting", nil
 	m.mu.Unlock()
 	m.routes.ClearServer()
-	m.logs.Add("Info", "OpenConnect", "Mac woke from sleep; VPN reconnect requested")
+	m.logs.Add("Info", "OpenConnect", "Mac woke from sleep; waiting for the tunnel to come back")
 	go m.waitForApplied(start, profile, requestedAt)
+	// OpenConnect's own Dead Peer Detection almost always notices the wake
+	// first and is already dialling. Sending SIGUSR2 into that attempt
+	// cancels it ("Socket connect cancelled") and costs another retry cycle,
+	// so nudge only if it has not reconnected on its own by then.
+	selfRecoveryTimeout := wakeSelfRecovery
+	go func() {
+		if m.waitForReconnect(start, requestedAt, selfRecoveryTimeout) {
+			return
+		}
+		if err := m.helper.Do(privileged.Request{Operation: "reconnect"}); err != nil {
+			m.logs.Add("Warning", "OpenConnect", "could not request a reconnect after wake: "+err.Error())
+			return
+		}
+		m.logs.Add("Info", "OpenConnect", "tunnel still down after wake; VPN reconnect requested")
+	}()
 	return nil
+}
+
+// waitForReconnect reports whether the vpnc-script hook has re-applied the
+// tunnel since after, giving up once timeout expires or the session ends.
+func (m *Manager) waitForReconnect(start, after time.Time, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		active := m.status.StartedAt != nil && m.status.StartedAt.Equal(start) && m.status.State == "connecting"
+		m.mu.RUnlock()
+		if !active {
+			return true
+		}
+		if b, err := os.ReadFile(m.statePath); err == nil {
+			var state scriptState
+			if json.Unmarshal(b, &state) == nil && state.TunnelDevice != "" && state.Reason == "reconnect" && state.UpdatedAt.After(after) {
+				return true
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return false
 }
 
 // waitForGateway blocks until the gateway accepts a TCP connection, or the

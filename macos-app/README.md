@@ -79,6 +79,36 @@ is registered with `SMAppService` and requires approval in System Settings.
 Its Unix socket is owned by the console user with mode `0600`, and its request
 schema is restricted to connection lifecycle and validated route mutations.
 
+## Architecture and recovery contracts
+
+This README is the desktop knowledge entry point. The upstream protocol engine
+is documented separately in `../www/`. The unprivileged agent
+(`internal/openconnect/manager.go`) owns UI status and observes the privileged
+helper (`internal/privileged/server.go`), which owns the OpenConnect process.
+The script hook (`cmd/openconnect-script-hook/main.go`) delegates network setup
+to the bundled `vpnc-script` and records its completion. Password and OTP are
+not retained for automatic restart; reconnect keeps the existing process and
+gateway session cookie. Cookie rejection still requires a fresh login.
+
+On Darwin, the bundled script's `attempt-reconnect` adds a gateway route but
+does not replace an existing one: `File exists` can leave stale routing after
+a network change. The hook therefore runs the script's network disconnect
+once before the first reconnect attempt, restores the captured DNS/proxy
+baseline, and keeps the tunnel descriptor and VPN process alive. Retry hooks
+do not repeat that teardown or enable the VPN PAC. After TLS/CSTP recovers,
+the hook runs network connect and the manager reapplies saved route overrides.
+An ordinary reconnect without prior teardown uses the script's reconnect
+action; replaying connect over a configured tunnel can overwrite the original
+default-route backup. The hook tests cover retry ordering and baseline retention.
+
+The state file retains the original DNS/proxy baseline throughout recovery.
+On normal disconnect it is removed after network cleanup, and the manager
+waits for both process exit and state removal before reporting completion.
+Wake recovery waits up to five minutes for the hook's reconnect completion;
+the helper's longer OpenConnect retry budget does not extend that UI deadline.
+TLS timeouts alone do not establish a stale-route diagnosis: confirming a
+particular wake failure still requires a sleep/wake run with the built app.
+
 ## Verification
 
 ```sh

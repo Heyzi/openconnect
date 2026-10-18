@@ -1,10 +1,63 @@
 package main
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestReconnectClearsStaleNetworkBeforeRetry(t *testing.T) {
+	configured, staleGateway := true, true
+	teardowns, setups, attempts := 0, 0, 0
+	run := func(reason string) error {
+		switch reason {
+		case "disconnect":
+			if !configured {
+				t.Fatal("repeated teardown during retries")
+			}
+			configured, staleGateway = false, false
+			teardowns++
+		case "attempt-reconnect":
+			if staleGateway {
+				t.Fatal("TLS retry would use the stale gateway route")
+			}
+			attempts++
+		case "connect":
+			if configured {
+				t.Fatal("connect would overwrite the original network backup")
+			}
+			configured = true
+			setups++
+		}
+		return nil
+	}
+	previous := "connect"
+	for _, reason := range []string{"attempt-reconnect", "attempt-reconnect", "reconnect", "reconnect"} {
+		if err := runNetworkTransition(reason, previous, run); err != nil {
+			t.Fatal(err)
+		}
+		previous = reason
+	}
+	if !configured || teardowns != 1 || setups != 1 || attempts != 2 {
+		t.Fatalf("configured=%v teardown=%d setup=%d attempts=%d", configured, teardowns, setups, attempts)
+	}
+}
+
+func TestReconnectStopsOnTeardownFailure(t *testing.T) {
+	want := errors.New("network cleanup failed")
+	calls := 0
+	err := runNetworkTransition("attempt-reconnect", "connect", func(reason string) error {
+		calls++
+		if reason != "disconnect" {
+			t.Fatalf("ran %s despite failed cleanup", reason)
+		}
+		return want
+	})
+	if !errors.Is(err, want) || calls != 1 {
+		t.Fatalf("error=%v calls=%d", err, calls)
+	}
+}
 
 func TestParseDNSServers(t *testing.T) {
 	got := parseDNSServers("10.20.30.40\n2001:db8::53\n")
