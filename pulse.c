@@ -78,6 +78,7 @@
 #define PROMPT_USERNAME		2
 #define PROMPT_PASSWORD		4
 #define PROMPT_GTC_NEXT		0x10000
+#define PROMPT_JUNIPER_2021	0x20000
 
 /* Request codes for the Juniper Expanded/2 auth requests. */
 #define J2_PASSCHANGE	0x43
@@ -139,6 +140,29 @@ static void buf_fill_eap_len(struct oc_text_buf *buf, int ofs)
 	/* EAP length word is always at 0x16, and counts bytes from 0x14 */
 	if (ofs >= 0 && !buf_error(buf) && buf->pos >= ofs + 4)
 		store_be16(buf->data + ofs + 2, buf->pos - ofs);
+}
+
+static int buf_append_avp_hdr(struct oc_text_buf *buf, uint32_t code)
+{
+	int ofs = -1;
+
+	if (!buf_error(buf))
+		ofs = buf->pos;
+	buf_append_be32(buf, code);
+	buf_append_be32(buf, AVP_MANDATORY << 24); /* length filled later */
+	return ofs;
+}
+
+static void buf_fill_avp_len(struct oc_text_buf *buf, int ofs)
+{
+	if (ofs >= 0 && !buf_error(buf) && buf->pos >= ofs + 8) {
+		int len = buf->pos - ofs;
+		store_be32(buf->data + ofs + 4, (AVP_MANDATORY << 24) + len);
+		if (len & 3) {
+			uint32_t pad = 0;
+			buf_append_bytes(buf, &pad, 4 - (len & 3));
+		}
+	}
 }
 
 static void buf_append_avp(struct oc_text_buf *buf, uint32_t type, const void *bytes, int len)
@@ -1012,7 +1036,6 @@ static int pulse_request_user_auth(struct openconnect_info *vpninfo, struct oc_t
 {
 	struct oc_auth_form f;
 	struct oc_form_opt o[2];
-	unsigned char eap_avp[23];
 	int l;
 	int ret;
 
@@ -1054,7 +1077,9 @@ static int pulse_request_user_auth(struct openconnect_info *vpninfo, struct oc_t
 	}
 	if (o[1]._value) {
 		l = strlen(o[1]._value);
-		if (l > 253) {
+		/* For PROMPT_JUNIPER_2021, official client truncates password
+		 * at 18 characters. */
+		if (!(prompt_flags & PROMPT_JUNIPER_2021) && l > 253) {
 			free_pass(&o[1]._value);
 			return -EINVAL;
 		}
@@ -1065,32 +1090,35 @@ static int pulse_request_user_auth(struct openconnect_info *vpninfo, struct oc_t
 		l = 0;
 	}
 
-	/* AVP flags+mandatory+length */
-	store_be32(eap_avp, AVP_CODE_EAP_MESSAGE);
-	store_be32(eap_avp + 4, (AVP_MANDATORY << 24) + sizeof(eap_avp) + l);
+	if (prompt_flags & PROMPT_JUNIPER_2021) {
+		int avp_ofs, eap_ofs, i;
 
-	/* EAP header: code/ident/len */
-	eap_avp[8] = EAP_RESPONSE;
-	eap_avp[9] = eap_ident;
-	store_be16(eap_avp + 10, l + 15); /* EAP length */
-	store_be32(eap_avp + 12, EXPANDED_JUNIPER);
-	store_be32(eap_avp + 16, 2);
+		avp_ofs = buf_append_avp_hdr(reqbuf, AVP_CODE_EAP_MESSAGE);
+		eap_ofs = buf_append_eap_hdr(reqbuf, EAP_RESPONSE, eap_ident, EAP_TYPE_EXPANDED, 5);
+		buf_append_bytes(reqbuf, "\x01", 1);
+		/* Truncate password at 18 characters. */
+		i = MIN(l, 18);
+		if (o[1]._value) {
+			buf_append_bytes(reqbuf, o[1]._value, i);
+			free_pass(&o[1]._value);
+		}
+		for ( ; i < 18; i++)
+			buf_append_bytes(reqbuf, "\0", 1);
+		buf_fill_eap_len(reqbuf, eap_ofs);
+		buf_fill_avp_len(reqbuf, avp_ofs);
+	} else {
+		int avp_ofs, eap_ofs;
+		unsigned char hdr[3] = { 0x02, 0x02, l + 2 };
 
-	/* EAP Juniper/2 payload: 02 02 <len> <password> */
-	eap_avp[20] = eap_avp[21] = 0x02;
-	eap_avp[22] = l + 2; /* Why 2? */
-	buf_append_bytes(reqbuf, eap_avp, sizeof(eap_avp));
-	if (o[1]._value) {
-		buf_append_bytes(reqbuf, o[1]._value, l);
-		free_pass(&o[1]._value);
-	}
-
-	/* Padding */
-	if ((sizeof(eap_avp) + l) & 3) {
-		uint32_t pad = 0;
-
-		buf_append_bytes(reqbuf, &pad,
-				 4 - ((sizeof(eap_avp) + l) & 3));
+		avp_ofs = buf_append_avp_hdr(reqbuf, AVP_CODE_EAP_MESSAGE);
+		eap_ofs = buf_append_eap_hdr(reqbuf, EAP_RESPONSE, eap_ident, EAP_TYPE_EXPANDED, 2);
+		buf_append_bytes(reqbuf, hdr, 3);
+		if (o[1]._value) {
+			buf_append_bytes(reqbuf, o[1]._value, l);
+			free_pass(&o[1]._value);
+		}
+		buf_fill_eap_len(reqbuf, eap_ofs);
+		buf_fill_avp_len(reqbuf, avp_ofs);
 	}
 
 	ret = 0;
@@ -1842,6 +1870,22 @@ static int pulse_authenticate(struct openconnect_info *vpninfo, int connecting)
 						       "Try Juniper mode (--protocol=nc)\n"));
 					goto bad_eap;
 
+				case 5: /* Recent Juniper password */
+					j2_found = 1;
+					j2_code = avp_c[12];
+					prompt_flags |= PROMPT_JUNIPER_2021;
+					if (j2_code == J2_PASSREQ) {
+						/* No idea what remaining 5 bytes do. */
+						if (avp_len != 18)
+							goto auth_unknown;
+					} else {
+						/* Unclear if other codes match "J2" codes.
+						 * I have observed 0x02 for "new PIN",
+						 * but no other codes. */
+						goto auth_unknown;
+					}
+					break;
+
 				default:
 					goto auth_unknown;
 				}
@@ -2567,7 +2611,8 @@ static int handle_main_config_packet(struct openconnect_info *vpninfo,
    encryption key, however large the latter is.
 */
 static int handle_esp_config_packet(struct openconnect_info *vpninfo,
-				    unsigned char *bytes, int len)
+				    unsigned char *bytes, int len,
+				    struct oc_text_buf *resp)
 {
 #ifdef HAVE_ESP
 	struct esp *esp;
@@ -2618,29 +2663,32 @@ static int handle_esp_config_packet(struct openconnect_info *vpninfo,
 
 	esp = &vpninfo->esp_in[vpninfo->current_esp_in];
 
-	/* Now, using the buffer in which we received the original packet (which
-	 * we trust our caller made large enough), create an appropriate reply.
-	 * A reply packet contains two sets of ESP information, as we are expected
-	 * to send our own followed by a copy of what the server sent to us. */
+	/* Build the response in resp. A reply contains two sets of ESP
+	 * information: our own followed by a copy of what the server sent. */
+	buf_truncate(resp);
 
-	/* Adjust the length in the IF-T/TLS header */
-	store_be32(bytes + 8, 0x40 + 2 * secretslen);
+	/* IF-T/TLS header (length filled by send_ift_packet) */
+	buf_append_ift_hdr(resp, VENDOR_JUNIPER, 1);
 
-	/* Copy the server's own ESP information into place */
-	memmove(bytes + secretslen + 0x3a, bytes + 0x34, secretslen + 0x06);
+	/* 16 bytes zeroes + ESP identifier + 4 zeroes */
+	buf_append_zeroes(resp, 16);
+	buf_append_be32(resp, 0x21202400);
+	buf_append_be32(resp, 0);		/* 0x24: zeroes */
+	buf_append_be32(resp, 0x24 + 2 * (secretslen + 6));	/* 0x28: payload_len */
+	buf_append_be32(resp, 0x08 + 2 * (secretslen + 6));	/* 0x2c: inner_len */
+	buf_append_be32(resp, 0x01000000);	/* 0x30: constant (sub-type?) */
 
-	/* Adjust other length fields. */
-	store_be32(bytes + 0x28, 0x30 + 2 * secretslen);
-	store_be32(bytes + 0x2c, 0x14 + 2 * secretslen);
+	/* Our SPI (little-endian) + secrets length + our keys */
+	buf_append_le32(resp, load_be32(&esp->spi));
+	buf_append_be16(resp, secretslen);
+	buf_append_bytes(resp, esp->enc_key, vpninfo->enc_key_len);
+	buf_append_bytes(resp, esp->hmac_key, vpninfo->hmac_key_len);
+	buf_append_zeroes(resp, secretslen - vpninfo->enc_key_len - vpninfo->hmac_key_len);
 
-	/* Store the SPI. Bizarrely little-endian again. */
-	store_le32(bytes + 0x34, load_be32(&esp->spi));
-	memcpy(bytes + 0x3a, esp->enc_key, vpninfo->enc_key_len);
-	memcpy(bytes + 0x3a + vpninfo->enc_key_len, esp->hmac_key, vpninfo->hmac_key_len);
-	memset(bytes + 0x3a + vpninfo->enc_key_len + vpninfo->hmac_key_len,
-	       0, 0x40 - vpninfo->enc_key_len - vpninfo->hmac_key_len);
+	/* Copy of server's SPI + secrets_len + secrets */
+	buf_append_bytes(resp, bytes + 0x34, secretslen + 0x06);
 
-	return 0;
+	return buf_error(resp);
 #else
 	return -EINVAL;
 #endif
@@ -2660,6 +2708,8 @@ int pulse_connect(struct openconnect_info *vpninfo)
 			return ret;
 	}
 
+	reqbuf = buf_alloc();
+
 	while (1) {
 		uint32_t pkt_type, config_len;
 
@@ -2669,8 +2719,10 @@ int pulse_connect(struct openconnect_info *vpninfo)
 		bytes = malloc(config_len);
 
 		for (int ii = 0; ii < config_len; ii += ret) {
-			if (!bytes)
-				return -ENOMEM;
+			if (!bytes) {
+				ret = -ENOMEM;
+				goto out;
+			}
 
 			ret = recv_ift_packet(vpninfo, bytes + ii, MAX(config_len - ii, TLS_RECORD_MAX));
 			if (ret < 0)
@@ -2756,23 +2808,22 @@ int pulse_connect(struct openconnect_info *vpninfo)
 			break;
 
 		case 0x21202400:
-			ret = handle_esp_config_packet(vpninfo, bytes, config_len);
+			ret = handle_esp_config_packet(vpninfo, bytes, config_len, reqbuf);
 			if (ret) {
 				vpninfo->dtls_state = DTLS_DISABLED;
 				continue;
 			}
 
-			/* It has created a response packet to send. */
-			ret = send_ift_bytes(vpninfo, bytes, load_be32(bytes + 8));
+			/* Send the ESP response */
+			ret = send_ift_packet(vpninfo, reqbuf);
 			if (ret)
 				goto out;
 
 			/* Tell server to enable ESP handling */
-			reqbuf = buf_alloc();
+			buf_truncate(reqbuf);
 			buf_append_ift_hdr(reqbuf, VENDOR_JUNIPER, 5);
 			buf_append(reqbuf, "ncmo=1\n%c", 0);
 			ret = send_ift_packet(vpninfo, reqbuf);
-			buf_free(reqbuf);
 			if (ret)
 				goto out;
 
@@ -2809,6 +2860,7 @@ int pulse_connect(struct openconnect_info *vpninfo)
 
  out:
 	free(bytes);
+	buf_free(reqbuf);
 	return ret;
 }
 
@@ -2899,7 +2951,10 @@ int pulse_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 			vpninfo->cstp_pkt = pkt = NULL;
 			work_done = 1;
 			continue;
-		case 1:
+		case 1: {
+			struct oc_text_buf *resp = NULL;
+			struct pkt *resp_pkt = NULL;
+
 			if (payload_len < 0x6a ||
 			    load_be32(pkt->data + 0x10) != 0x21202400 ||
 			    load_be32(pkt->data + 0x18) != payload_len ||
@@ -2910,20 +2965,30 @@ int pulse_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
 			dump_buf_hex(vpninfo, PRG_TRACE, '<', (void *)&vpninfo->cstp_pkt->pulse.vendor, pkt_len);
 
-			ret = handle_esp_config_packet(vpninfo, (void *)&pkt->pulse.vendor, pkt_len);
-			if (ret) {
+			resp = buf_alloc();
+			ret = handle_esp_config_packet(vpninfo, (void *)&pkt->pulse.vendor, pkt_len, resp);
+			if (!ret) {
+				resp_pkt = alloc_pkt(vpninfo, resp->pos - 16);
+				if (!resp_pkt)
+					ret = -ENOMEM;
+			}
+			if (!ret) {
+				memcpy(&resp_pkt->pulse.vendor, resp->data, resp->pos);
+				store_be32(&resp_pkt->pulse.len, resp->pos);
+				resp_pkt->len = resp->pos - 16;
+				queue_packet(&vpninfo->tcp_control_queue, resp_pkt);
+
+				print_esp_keys(vpninfo, _("new incoming"), &vpninfo->esp_in[vpninfo->current_esp_in]);
+				print_esp_keys(vpninfo, _("new outgoing"), &vpninfo->esp_out);
+			} else {
 				vpn_progress(vpninfo, PRG_ERR,
 					     _("ESP rekey failed\n"));
 				vpninfo->proto->udp_close(vpninfo);
-				continue;
 			}
-			vpninfo->cstp_pkt = NULL;
-			pkt->len = load_be32(&pkt->pulse.len) - 16;
-			queue_packet(&vpninfo->tcp_control_queue, pkt);
 
-			print_esp_keys(vpninfo, _("new incoming"), &vpninfo->esp_in[vpninfo->current_esp_in]);
-			print_esp_keys(vpninfo, _("new outgoing"), &vpninfo->esp_out);
+			buf_free(resp);
 			continue;
+		}
 
 		case 0x93: {
 			/* Expected contents are "errorType=%d errorString=%s\n". Known values:
