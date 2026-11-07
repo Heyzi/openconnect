@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"time"
 )
 
@@ -96,10 +97,15 @@ func (c Client) Query(req Request) (Response, error) {
 	return response, nil
 }
 
-// CaptureDir is where OpenConnect writes the gateway posture payload. The
-// helper runs from launchd (no TMPDIR, so os.TempDir() is /tmp) while the app
-// runs in the user session (per-user /var/folders TMPDIR), so the location must
-// be spelled out instead of derived from os.TempDir() on both sides.
+// CaptureDir is where OpenConnect writes the gateway posture payload. Root
+// writes here, so it must live under root-only /var/run: in a user-writable
+// directory a planted symlink would redirect that write.
 func CaptureDir(uid int) string {
-	return fmt.Sprintf("/tmp/openconnect-desktop-csd-%d", uid)
+	return fmt.Sprintf("/var/run/openconnect-desktop-csd-%d", uid)
 }
+
+var tunnelDevice = regexp.MustCompile(`^utun[0-9]+$`)
+
+// ValidTunnelDevice guards device names read from the state file before they
+// reach route(8), scutil or sysctl.
+func ValidTunnelDevice(device string) bool { return tunnelDevice.MatchString(device) }

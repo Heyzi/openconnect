@@ -21,8 +21,11 @@ type Buffer struct {
 }
 
 var secrets = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(<(?:password|passwd|token|cookie|authorization|pin)\b[^>]*>)[^<]*(</(?:password|passwd|token|cookie|authorization|pin)\s*>)`),
-	regexp.MustCompile(`(?i)(password|passwd|token|cookie|authorization|pin)(\s*[:=]\s*)\S+`),
+	// Prefixed names too: <secondary_password>, <session-token>.
+	regexp.MustCompile(`(?i)(<[\w:-]*(?:password|passwd|token|cookie|authorization|pin|secret)\b[^>]*>)[^<]*(</[\w:-]*(?:password|passwd|token|cookie|authorization|pin|secret)\s*>)`),
+	// A header value can hold several secrets ("Cookie: a=1; webvpn=2"): drop all of it.
+	regexp.MustCompile(`(?i)(cookie|authorization|x-dtls[\w-]*-(?:master-secret|session-id))(\s*:\s*).*`),
+	regexp.MustCompile(`(?i)(password|passwd|token|cookie|authorization|pin|secret)(\s*[:=]\s*)\S+`),
 	regexp.MustCompile(`(?i)-----BEGIN [^-]*PRIVATE KEY-----`),
 }
 

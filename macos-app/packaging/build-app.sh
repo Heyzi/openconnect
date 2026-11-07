@@ -27,7 +27,7 @@ if [ -f "$ROOT/assets/AppIcon.icns" ]; then cp "$ROOT/assets/AppIcon.icns" "$CON
 CGO_ENABLED=0 "$GO" build -trimpath -ldflags="-s -w -X main.buildCommit=$BUILD_COMMIT" -o "$CONTENTS/MacOS/openconnect-desktop" "$ROOT/cmd/openconnect-desktop"
 CGO_ENABLED=0 "$GO" build -trimpath -ldflags='-s -w' -o "$CONTENTS/Library/LaunchServices/openconnect-helper" "$ROOT/cmd/openconnect-helper"
 CGO_ENABLED=0 "$GO" build -trimpath -ldflags='-s -w' -o "$CONTENTS/Resources/bin/openconnect-script-hook" "$ROOT/cmd/openconnect-script-hook"
-xcrun swiftc -O -framework AppKit -o "$TRAY_CONTENTS/MacOS/openconnect-tray" "$ROOT/native/macos/Tray.swift"
+xcrun swiftc -O -parse-as-library -framework AppKit -o "$TRAY_CONTENTS/MacOS/openconnect-tray" "$ROOT/native/macos/Tray.swift" "$ROOT/native/macos/TrayClient.swift"
 xcrun swiftc -O -framework Security -o "$CONTENTS/MacOS/openconnect-keychain" "$ROOT/native/macos/Keychain.swift"
 xcrun swiftc -O -framework ServiceManagement -o "$CONTENTS/MacOS/openconnect-helper-installer" "$ROOT/native/macos/HelperInstaller.swift"
 test -x "$OPENCONNECT_BINARY" || { echo "OpenConnect binary not found: $OPENCONNECT_BINARY" >&2; exit 1; }

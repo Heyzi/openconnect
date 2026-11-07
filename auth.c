@@ -909,8 +909,13 @@ static void macos_device_identity(char model[128], char unique_id[65],
 	macos_primary_mac(mac);
 	{
 		const char *override = getenv("OPENCONNECT_MAC_OVERRIDE");
-		if (override && override[0])
+		if (override && override[0]) {
+			char *p;
 			strlcpy(mac, override, 18);
+			/* Same aa-bb-cc-dd-ee-ff form as the detected address. */
+			for (p = mac; *p; p++)
+				*p = *p == ':' ? '-' : tolower((unsigned char)*p);
+		}
 	}
 }
 #endif
@@ -923,8 +928,9 @@ static xmlDocPtr xmlpost_new_query(struct openconnect_info *vpninfo, const char 
 	xmlDocPtr doc;
 	xmlNodePtr root, node, capabilities;
 #ifdef __APPLE__
-	char device_type[128], unique_id[65], unique_id_global[41], mac[18];
-	macos_device_identity(device_type, unique_id, unique_id_global, mac);
+	char device_type[128] = "", unique_id[65] = "", unique_id_global[41] = "", mac[18] = "";
+	if (vpninfo->send_device_id)
+		macos_device_identity(device_type, unique_id, unique_id_global, mac);
 #endif
 
 	doc = xmlNewDoc(XCAST("1.0"));
@@ -1308,6 +1314,23 @@ static int run_csd_script(struct openconnect_info *vpninfo, char *buf, int bufle
 		return -EINVAL;
 	}
 
+	/* Before the permission check: inspecting a payload must not require
+	 * being willing to run it. */
+	if (buflen && vpninfo->csd_save) {
+		int savefd = open(vpninfo->csd_save, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0644);
+		if (savefd < 0 || write(savefd, (void *)buf, buflen) != buflen) {
+			int err = errno;
+			if (savefd >= 0)
+				close(savefd);
+			vpn_progress(vpninfo, PRG_ERR,
+				     _("Failed to save downloaded CSD payload: %s\n"), strerror(err));
+		} else {
+			close(savefd);
+			vpn_progress(vpninfo, PRG_INFO,
+				     _("Saved downloaded CSD payload to '%s'.\n"), vpninfo->csd_save);
+		}
+	}
+
 	if (!vpninfo->uid_csd_given && !vpninfo->csd_wrapper) {
 		vpn_progress(vpninfo, PRG_ERR,
 			     _("Error: Server asked us to download and run a 'Cisco Secure Desktop' trojan.\n"
@@ -1362,20 +1385,6 @@ static int run_csd_script(struct openconnect_info *vpninfo, char *buf, int bufle
 		}
 		fchmod(fd, 0755);
 		close(fd);
-		if (vpninfo->csd_save) {
-			int savefd = open(vpninfo->csd_save, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-			if (savefd < 0 || write(savefd, (void *)buf, buflen) != buflen) {
-				int err = errno;
-				if (savefd >= 0)
-					close(savefd);
-				vpn_progress(vpninfo, PRG_ERR,
-					     _("Failed to save downloaded CSD payload: %s\n"), strerror(err));
-			} else {
-				close(savefd);
-				vpn_progress(vpninfo, PRG_INFO,
-					     _("Saved downloaded CSD payload to '%s'.\n"), vpninfo->csd_save);
-			}
-		}
 	}
 
 	vpn_progress(vpninfo, PRG_INFO,

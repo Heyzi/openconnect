@@ -410,7 +410,10 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Password == "" || in.OTP == "" {
 		if in.Password == "" {
-			in.Password, _ = s.keychain.Get(p.ID)
+			var err error
+			if in.Password, err = s.keychain.Get(p.ID); err != nil {
+				s.logs.Add("Warning", "Keychain", "could not read saved password: "+err.Error())
+			}
 		}
 		if in.Password == "" || in.OTP == "" {
 			http.Error(w, "password and OTP are required", 400)
@@ -439,10 +442,6 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 		s.logs.Add("Info", "Connectivity", "VPN server "+server+" is reachable")
 	}
 	p.Server, p.FallbackServers = server, nil
-	// A captured posture payload belongs to exactly one connection attempt.
-	// Remove the previous session's file so the inspector cannot attribute stale
-	// HostScan data to the new VPN session.
-	_ = os.Remove(capturePath())
 	if err := s.vpn.Connect(p, openconnect.Credentials{Password: in.Password, OTP: in.OTP}); err != nil {
 		http.Error(w, err.Error(), 409)
 		return
@@ -450,9 +449,16 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 202, s.vpn.Status())
 }
 func firstReachableServer(servers []string, check func(string) error) (string, error) {
+	// Probe concurrently but keep priority: a healthy primary returns at once
+	// and a dead one no longer costs its timeouts before the fallback is tried.
+	results := make([]chan error, len(servers))
+	for i, server := range servers {
+		results[i] = make(chan error, 1)
+		go func(result chan<- error, server string) { result <- check(server) }(results[i], server)
+	}
 	var lastErr error
-	for _, server := range servers {
-		if lastErr = check(server); lastErr == nil {
+	for i, server := range servers {
+		if lastErr = <-results[i]; lastErr == nil {
 			return server, nil
 		}
 	}

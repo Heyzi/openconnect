@@ -28,7 +28,7 @@ func (s Store) run(operation, account, secret string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", errors.New(strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 func (s Store) Set(account, secret string) error {
 	if s.SetFunc != nil {

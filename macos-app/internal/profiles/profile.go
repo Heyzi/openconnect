@@ -19,11 +19,6 @@ type Profile struct {
 	Protocol          string   `json:"protocol,omitempty"`
 	Username          string   `json:"username,omitempty"`
 	Group             string   `json:"group,omitempty"`
-	Certificate       string   `json:"certificate,omitempty"`
-	ServerFingerprint string   `json:"serverFingerprint,omitempty"`
-	ExtraArgs         []string `json:"extraArgs,omitempty"`
-	AutoConnect       bool     `json:"autoConnect,omitempty"`
-	TrustedNetworks   []string `json:"trustedNetworks,omitempty"`
 	Verbose           bool     `json:"verbose,omitempty"`
 	SaveServerScripts bool     `json:"saveServerScripts,omitempty"`
 	MACAddress        string   `json:"macAddress,omitempty"`
@@ -60,8 +55,8 @@ func (p *Profile) Validate() error {
 	for _, server := range p.Servers() {
 		server = strings.TrimSpace(server)
 		u, err := url.Parse(server)
-		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-			return errors.New("every server must be an http or https URL")
+		if err != nil || u.Host == "" || u.Scheme != "https" {
+			return errors.New("every server must be an https URL")
 		}
 		if !seen[server] {
 			seen[server] = true

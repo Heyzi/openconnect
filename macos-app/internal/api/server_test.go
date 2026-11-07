@@ -80,16 +80,19 @@ func TestServerReachabilityRepairsStaleHostRoute(t *testing.T) {
 }
 
 func TestServerFailoverUsesFirstReachableServer(t *testing.T) {
-	checked := []string{}
+	// vpn3 answers first, but vpn2 has priority and must win.
 	server, err := firstReachableServer([]string{"https://vpn1.example", "https://vpn2.example", "https://vpn3.example"}, func(server string) error {
-		checked = append(checked, server)
-		if server == "https://vpn2.example" {
+		switch server {
+		case "https://vpn2.example":
+			time.Sleep(20 * time.Millisecond)
+			return nil
+		case "https://vpn3.example":
 			return nil
 		}
 		return errors.New("offline")
 	})
-	if err != nil || server != "https://vpn2.example" || len(checked) != 2 {
-		t.Fatalf("server = %q, checked = %#v, error = %v", server, checked, err)
+	if err != nil || server != "https://vpn2.example" {
+		t.Fatalf("server = %q, error = %v", server, err)
 	}
 }
 

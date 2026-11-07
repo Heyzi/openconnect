@@ -33,3 +33,19 @@ func TestLimit(t *testing.T) {
 		t.Fatalf("unexpected entries: %#v", got)
 	}
 }
+
+func TestRedactsPrefixedTagsAndWholeSecretHeaders(t *testing.T) {
+	for _, line := range []string{
+		"> <secondary_password>LEAK</secondary_password>",
+		"< <session-token>LEAK</session-token>",
+		"> Cookie: webvpnlogin=1; webvpn=LEAK",
+		"< Set-Cookie: webvpn=LEAK; path=/",
+		"> X-DTLS-Master-Secret: LEAK",
+		"> X-DTLS-Session-ID: LEAK",
+		"> user=a&secondary_password=LEAK",
+	} {
+		if got := redact(line); strings.Contains(got, "LEAK") {
+			t.Errorf("leaked: %q", got)
+		}
+	}
+}

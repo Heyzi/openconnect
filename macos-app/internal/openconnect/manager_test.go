@@ -232,7 +232,7 @@ func TestFinishDisconnectWaitsForProcessAndStateFile(t *testing.T) {
 	}
 }
 
-func TestFinishDisconnectKeepsBlockingStateWhenCleanupTimesOut(t *testing.T) {
+func TestFinishDisconnectSettlesInErrorWhenCleanupTimesOut(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
 	if err := os.WriteFile(statePath, []byte("{}"), 0600); err != nil {
@@ -249,8 +249,8 @@ func TestFinishDisconnectKeepsBlockingStateWhenCleanupTimesOut(t *testing.T) {
 	manager.finishDisconnect(&start, "", false, 30*time.Millisecond)
 
 	status := manager.Status()
-	if status.State != "disconnecting" || status.LastError == "" {
-		t.Fatalf("status = %#v, want blocking disconnecting state with error", status)
+	if status.State != "error" || status.LastError == "" {
+		t.Fatalf("status = %#v, want error state so the user can retry", status)
 	}
 }
 

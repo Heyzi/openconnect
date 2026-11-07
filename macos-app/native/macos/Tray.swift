@@ -10,18 +10,12 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     private var detailItem: NSMenuItem!
     private var disconnectItem: NSMenuItem!
     private var copyServerItem: NSMenuItem!
-    private var sessionCookie: String?
-    private var csrfToken: String?
     private var currentServer: String?
-    private lazy var origin: URL = {
-        var components = URLComponents(url: portalURL, resolvingAgainstBaseURL: false)!
-        components.path = ""
-        components.query = nil
-        return components.url!
-    }()
+    private let portal: PortalClient
 
     init(portalURL: URL, agentPID: Int32, statusPath: String, buildCommit: String) {
         self.portalURL = portalURL
+        self.portal = PortalClient(portalURL: portalURL)
         self.agentPID = agentPID
         self.statusPath = statusPath
         self.buildCommit = buildCommit
@@ -76,7 +70,8 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = statusIcon(color: color)
         statusItem.button?.toolTip = "OpenConnect Desktop — \(state)"
         let active = ["connected", "connecting"].contains(state)
-        disconnectItem.isHidden = !active
+        // Kept during "disconnecting" so a stalled teardown can be retried.
+        disconnectItem.isHidden = !active && state != "disconnecting"
         copyServerItem.isHidden = !active
         currentServer = object["server"] as? String
         let profileName = object["profileName"] as? String
@@ -90,43 +85,14 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func ensureSession(_ completion: @escaping (Bool) -> Void) {
-        if sessionCookie != nil, csrfToken != nil { completion(true); return }
-        // portalURL is the one-time /bootstrap?token=... link, which redirects to
-        // "/" after setting the session cookie. URLSession follows that redirect
-        // itself, so `response` here is the reply to "/" and never carries the
-        // Set-Cookie header — only HTTPCookieStorage, which URLSession populates
-        // from every response in the chain, still has it.
-        URLSession.shared.dataTask(with: portalURL) { [weak self] _, _, _ in
-            guard let self,
-                  let cookie = HTTPCookieStorage.shared.cookies(for: self.origin)?.first(where: { $0.name == "oc_session" }) else {
-                DispatchQueue.main.async { completion(false) }
-                return
-            }
-            self.sessionCookie = "\(cookie.name)=\(cookie.value)"
-            var request = URLRequest(url: self.origin.appendingPathComponent("api/v1/session"))
-            request.setValue(self.sessionCookie, forHTTPHeaderField: "Cookie")
-            URLSession.shared.dataTask(with: request) { data, _, _ in
-                guard let data,
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let csrf = object["csrfToken"] as? String else {
-                    DispatchQueue.main.async { completion(false) }
-                    return
-                }
-                self.csrfToken = csrf
-                DispatchQueue.main.async { completion(true) }
-            }.resume()
-        }.resume()
-    }
-
     @objc private func disconnect() {
-        ensureSession { [weak self] ok in
-            guard ok, let self else { return }
-            var request = URLRequest(url: self.origin.appendingPathComponent("api/v1/disconnect"))
-            request.httpMethod = "POST"
-            request.setValue(self.sessionCookie, forHTTPHeaderField: "Cookie")
-            request.setValue(self.csrfToken, forHTTPHeaderField: "X-CSRF-Token")
-            URLSession.shared.dataTask(with: request).resume()
+        portal.disconnect { error in
+            guard let error else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "Could not disconnect"
+            alert.informativeText = error
+            alert.runModal()
         }
     }
 
@@ -169,11 +135,16 @@ final class TrayDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-guard CommandLine.arguments.count == 5,
-      let url = URL(string: CommandLine.arguments[1]),
-      let pid = Int32(CommandLine.arguments[2]) else { exit(64) }
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-let delegate = TrayDelegate(portalURL: url, agentPID: pid, statusPath: CommandLine.arguments[3], buildCommit: CommandLine.arguments[4])
-app.delegate = delegate
-app.run()
+@main
+enum TrayMain {
+    static func main() {
+        guard CommandLine.arguments.count == 5,
+              let url = URL(string: CommandLine.arguments[1]),
+              let pid = Int32(CommandLine.arguments[2]) else { exit(64) }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let delegate = TrayDelegate(portalURL: url, agentPID: pid, statusPath: CommandLine.arguments[3], buildCommit: CommandLine.arguments[4])
+        app.delegate = delegate
+        app.run()
+    }
+}

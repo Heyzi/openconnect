@@ -10,7 +10,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"openconnect.local/desktop/internal/privileged"
 )
 
 type Route struct {
@@ -55,7 +58,8 @@ func main() {
 		return
 	}
 	if reason != "disconnect" && reason != "pre-init" && previous.AppliedAt.IsZero() {
-		previous = State{AppliedAt: time.Now().UTC(), TunnelDevice: os.Getenv("TUNDEV"), DNS: snapshotDNS(), Proxies: snapshotProxies()}
+		names := services()
+		previous = State{AppliedAt: time.Now().UTC(), TunnelDevice: os.Getenv("TUNDEV"), DNS: snapshotDNS(names), Proxies: snapshotProxies(names)}
 		writeState(statePath, previous)
 	}
 	if err := runNetworkTransition(reason, previous.Reason, func(step string) error {
@@ -86,7 +90,7 @@ func main() {
 		return
 	}
 	state := runtimeState(previous, reason, os.Getenv("TUNDEV"), os.Getenv("VPNGATEWAY"), os.Getenv("CISCO_PROXY_PAC"), routes())
-	if !strings.HasPrefix(state.TunnelDevice, "utun") {
+	if !privileged.ValidTunnelDevice(state.TunnelDevice) {
 		fatal("vpnc-script did not provide a valid utun device")
 	}
 	writeState(statePath, state)
@@ -121,14 +125,13 @@ func writeState(statePath string, state State) {
 		fatal(err.Error())
 	}
 	tmp := statePath + ".tmp"
-	if err = os.WriteFile(tmp, append(b, '\n'), 0600); err != nil {
+	// Stays root-owned: root replays this file during recovery. World-readable
+	// so the agent can follow it; it holds no secrets.
+	if err = os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
 		fatal(err.Error())
 	}
 	if err = os.Rename(tmp, statePath); err != nil {
 		fatal(err.Error())
-	}
-	if uid, conversionErr := strconv.Atoi(os.Getenv("OPENCONNECT_OWNER_UID")); conversionErr == nil {
-		_ = os.Chown(statePath, uid, -1)
 	}
 }
 func routes() []Route {
@@ -165,20 +168,39 @@ func services() []string {
 	}
 	return out
 }
-func snapshotProxies() []ProxyState {
-	var out []ProxyState
-	for _, service := range services() {
-		b, e := exec.Command("/usr/sbin/networksetup", "-getautoproxyurl", service).Output()
-		if e != nil {
-			continue
+
+// queryServices runs one read-only networksetup query per service concurrently,
+// keeping service order and dropping services whose query failed.
+func queryServices[T any](services []string, flag string, parse func(string, []byte) T) []T {
+	results := make([]*T, len(services))
+	var wg sync.WaitGroup
+	for i, service := range services {
+		wg.Add(1)
+		go func(i int, service string) {
+			defer wg.Done()
+			if b, e := exec.Command("/usr/sbin/networksetup", flag, service).Output(); e == nil {
+				value := parse(service, b)
+				results[i] = &value
+			}
+		}(i, service)
+	}
+	wg.Wait()
+	var out []T
+	for _, result := range results {
+		if result != nil {
+			out = append(out, *result)
 		}
+	}
+	return out
+}
+func snapshotProxies(services []string) []ProxyState {
+	return queryServices(services, "-getautoproxyurl", func(service string, b []byte) ProxyState {
 		state := ProxyState{Service: service, Enabled: enabledPattern.Match(b)}
 		if match := urlPattern.FindSubmatch(b); len(match) == 2 && string(match[1]) != "(null)" {
 			state.URL = strings.TrimSpace(string(match[1]))
 		}
-		out = append(out, state)
-	}
-	return out
+		return state
+	})
 }
 func applyProxyPAC(states []ProxyState, pac string) {
 	for _, state := range states {
@@ -199,17 +221,10 @@ func restoreProxies(states []ProxyState) {
 		_ = exec.Command("/usr/sbin/networksetup", "-setautoproxystate", state.Service, value).Run()
 	}
 }
-func snapshotDNS() []DNSState {
-	var out []DNSState
-	for _, service := range services() {
-		b, e := exec.Command("/usr/sbin/networksetup", "-getdnsservers", service).Output()
-		if e != nil {
-			continue
-		}
-		state := DNSState{Service: service, Servers: parseDNSServers(string(b))}
-		out = append(out, state)
-	}
-	return out
+func snapshotDNS(services []string) []DNSState {
+	return queryServices(services, "-getdnsservers", func(service string, b []byte) DNSState {
+		return DNSState{Service: service, Servers: parseDNSServers(string(b))}
+	})
 }
 func parseDNSServers(output string) []string {
 	var servers []string
@@ -233,7 +248,7 @@ func restoreDNS(states []DNSState) {
 	}
 }
 func removeTunnelDNS(device string) {
-	if !strings.HasPrefix(device, "utun") {
+	if !privileged.ValidTunnelDevice(device) {
 		return
 	}
 	commands := "open\nremove State:/Network/Service/" + device + "/DNS\nremove State:/Network/Service/" + device + "/IPv4\nclose\n"

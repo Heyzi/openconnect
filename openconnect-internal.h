@@ -525,6 +525,7 @@ struct openconnect_info {
 	char *dtls12_ciphers;
 	char *csd_wrapper;
 	char *csd_save;
+	int send_device_id;
 	int trojan_interval;
 	time_t last_trojan;
 	int no_http_keepalive;

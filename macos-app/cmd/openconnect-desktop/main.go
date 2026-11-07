@@ -22,7 +22,6 @@ import (
 	"openconnect.local/desktop/internal/network"
 	"openconnect.local/desktop/internal/openconnect"
 	"openconnect.local/desktop/internal/platform"
-	"openconnect.local/desktop/internal/privileged"
 	"openconnect.local/desktop/internal/profiles"
 )
 
@@ -41,11 +40,6 @@ func main() {
 	home, err := os.UserHomeDir()
 	fatal(err)
 	data := filepath.Join(home, "Library", "Application Support", "OpenConnect Desktop")
-	captureDir := privileged.CaptureDir(os.Getuid())
-	_ = os.RemoveAll(captureDir)
-	if err = os.MkdirAll(captureDir, 0700); err != nil {
-		fatal(err)
-	}
 	if err = os.MkdirAll(data, 0700); err != nil {
 		fatal(err)
 	}
@@ -76,6 +70,7 @@ func main() {
 	} else if recovered {
 		logs.Add("Info", "Network Recovery", "stale VPN DNS, proxy, and tunnel state restored")
 	}
+	vpn.AdoptRunningSession()
 	keys := keychain.Store{Binary: filepath.Join(filepath.Dir(executable), "openconnect-keychain")}
 	server := api.New(ps, ns, keys, vpn, logs, buildCommit)
 	listener, err := server.Listen()
@@ -88,7 +83,10 @@ func main() {
 		defer ticker.Stop()
 		var previous []byte
 		for range ticker.C {
-			if encoded, encodeErr := json.Marshal(vpn.Status()); encodeErr == nil {
+			// The tray ignores traffic; keeping it out stops a rewrite every second.
+			status := vpn.Status()
+			status.Traffic = nil
+			if encoded, encodeErr := json.Marshal(status); encodeErr == nil {
 				previous, _ = writeStatus(statusPath, previous, encoded)
 			}
 		}

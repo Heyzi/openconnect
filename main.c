@@ -223,6 +223,7 @@ enum {
 	OPT_MULTICERT_KEY,
 	OPT_MULTICERT_KEY_PASSWORD,
 	OPT_MAC_ADDRESS,
+	OPT_SEND_DEVICE_ID,
 };
 
 #ifdef __sun__
@@ -299,6 +300,7 @@ static const struct option long_options[] = {
 	OPTION("version-string", 1, OPT_VERSION),
 	OPTION("local-hostname", 1, OPT_LOCAL_HOSTNAME),
 	OPTION("mac-address", 1, OPT_MAC_ADDRESS),
+	OPTION("send-device-id", 0, OPT_SEND_DEVICE_ID),
 	OPTION("disable-ipv6", 0, OPT_DISABLE_IPV6),
 	OPTION("no-proxy", 0, OPT_NO_PROXY),
 	OPTION("libproxy", 0, OPT_LIBPROXY),
@@ -1098,8 +1100,9 @@ static void usage(void)
 	printf("\n%s:\n", _("VPN configuration script"));
 	printf("  -i, --interface=IFNAME          %s\n", _("Use IFNAME for tunnel interface"));
 	printf("  -s, --script=SCRIPT             %s\n", _("Shell command line for using a vpnc-compatible config script"));
-	printf("      --mac-address=MAC           %s\n", _("Override macOS device MAC address sent during authentication"));
 	printf("                                  %s: \"%s\"\n", _("default"), default_vpncscript);
+	printf("      --send-device-id            %s\n", _("Send macOS device identity (hashed hardware UUID, MAC) during authentication"));
+	printf("      --mac-address=MAC           %s\n", _("Override macOS device MAC address sent during authentication"));
 #ifndef _WIN32
 	printf("  -S, --script-tun                %s\n", _("Pass traffic to 'script' program, not tun"));
 #endif
@@ -2061,6 +2064,9 @@ int main(int argc, char *argv[])
 				exit(1);
 			}
 			setenv("OPENCONNECT_MAC_OVERRIDE", config_arg, 1);
+			break;
+		case OPT_SEND_DEVICE_ID:
+			vpninfo->send_device_id = 1;
 			break;
 		case OPT_NON_INTER:
 			non_inter = 1;

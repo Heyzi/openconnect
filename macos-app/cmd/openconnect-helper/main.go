@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"openconnect.local/desktop/internal/privileged"
 )
@@ -32,9 +33,10 @@ func main() {
 		server.OpenConnect = filepath.Join(resources, "bin", "openconnect")
 		server.Hook = filepath.Join(resources, "bin", "openconnect-script-hook")
 		server.VPNCScript = filepath.Join(resources, "vpnc-script")
-		server.OwnerUID = consoleUID()
+		server.OwnerUID = waitForConsoleUser()
 		server.CaptureDir = privileged.CaptureDir(server.OwnerUID)
-		server.ConfigID, err = privileged.ComponentID(executable, server.OpenConnect, server.Hook, server.VPNCScript)
+		server.Components = []string{executable, server.OpenConnect, server.Hook, server.VPNCScript}
+		server.ConfigID, err = privileged.ComponentID(server.Components...)
 		if err != nil {
 			fatal(err)
 		}
@@ -46,6 +48,17 @@ func main() {
 	if err := server.Serve(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// waitForConsoleUser blocks past the login window: launchd starts the helper at
+// boot, when root owns /dev/console, and the socket must belong to the user.
+func waitForConsoleUser() int {
+	for {
+		if uid := consoleUID(); uid > 0 {
+			return uid
+		}
+		time.Sleep(time.Second)
 	}
 }
 

@@ -1,11 +1,13 @@
 package openconnect
 
 import (
+	"encoding/binary"
 	"errors"
-	"os/exec"
-	"strconv"
-	"strings"
+	"net"
+	"syscall"
 	"time"
+
+	"openconnect.local/desktop/internal/privileged"
 )
 
 type TrafficStats struct {
@@ -32,7 +34,7 @@ func (t *trafficTracker) sample(current byteCounters, now time.Time) TrafficStat
 		t.initialized = true
 		t.previous = current
 		t.previousAt = now
-		return TrafficStats{}
+		return TrafficStats{DownloadBytes: t.downloaded, UploadBytes: t.uploaded}
 	}
 	receivedDelta, sentDelta := counterDelta(t.previous.received, current.received), counterDelta(t.previous.sent, current.sent)
 	t.downloaded += receivedDelta
@@ -47,64 +49,54 @@ func (t *trafficTracker) sample(current byteCounters, now time.Time) TrafficStat
 	return stats
 }
 
+// counterDelta works modulo 2^32: the kernel reports only the low 32 bits here
+// even though the field is 64-bit. Polled every second, a wrap is unambiguous.
 func counterDelta(previous, current uint64) uint64 {
-	if current < previous {
-		return 0
-	}
-	return current - previous
+	return uint64(uint32(current) - uint32(previous))
 }
 
+// interfaceByteCounters reads counters straight from the kernel; this
+// runs every second, so forking netstat is too expensive.
 func interfaceByteCounters(device string) (byteCounters, error) {
-	if !strings.HasPrefix(device, "utun") {
+	if !privileged.ValidTunnelDevice(device) {
 		return byteCounters{}, errors.New("invalid tunnel device")
 	}
-	output, err := exec.Command("/usr/sbin/netstat", "-b", "-I", device).Output()
+	return kernelByteCounters(device)
+}
+
+func kernelByteCounters(device string) (byteCounters, error) {
+	iface, err := net.InterfaceByName(device)
 	if err != nil {
 		return byteCounters{}, err
 	}
-	return parseNetstatByteCounters(string(output), device)
+	rib, err := syscall.RouteRIB(syscall.NET_RT_IFLIST2, iface.Index)
+	if err != nil {
+		return byteCounters{}, err
+	}
+	return parseIfList2(rib, iface.Index)
 }
 
-func parseNetstatByteCounters(output, device string) (byteCounters, error) {
-	headerSeen := false
-	var result byteCounters
-	found := false
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		if !headerSeen {
-			headerSeen = fields[0] == "Name" && slicesContain(fields, "Ibytes") && slicesContain(fields, "Obytes")
-			continue
-		}
-		if len(fields) < 7 || fields[0] != device {
-			continue
-		}
-		// The Network/Address columns vary by row, while the seven counter
-		// columns at the end are stable: Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll.
-		received, receivedErr := strconv.ParseUint(fields[len(fields)-5], 10, 64)
-		sent, sentErr := strconv.ParseUint(fields[len(fields)-2], 10, 64)
-		if receivedErr != nil || sentErr != nil {
-			continue
-		}
-		// netstat can print the same interface counters for multiple address
-		// families. Taking the maximum avoids counting those rows twice.
-		result.received = max(result.received, received)
-		result.sent = max(result.sent, sent)
-		found = true
-	}
-	if !found {
-		return byteCounters{}, errors.New("tunnel counters not found")
-	}
-	return result, nil
-}
+// Offsets into struct if_msghdr2 (<net/if.h>); if_data64 starts at 32.
+const (
+	rtmIfInfo2    = 0x12
+	ifm2Type      = 3
+	ifm2Index     = 12
+	ifm2InBytes   = 32 + 64
+	ifm2OutBytes  = 32 + 72
+	ifm2MinLength = ifm2OutBytes + 8
+)
 
-func slicesContain(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
+func parseIfList2(rib []byte, index int) (byteCounters, error) {
+	for len(rib) >= 2 {
+		length := int(binary.NativeEndian.Uint16(rib))
+		if length < 2 || length > len(rib) {
+			break
+		}
+		message := rib[:length]
+		rib = rib[length:]
+		if length >= ifm2MinLength && message[ifm2Type] == rtmIfInfo2 && int(binary.NativeEndian.Uint16(message[ifm2Index:])) == index {
+			return byteCounters{received: binary.NativeEndian.Uint64(message[ifm2InBytes:]), sent: binary.NativeEndian.Uint64(message[ifm2OutBytes:])}, nil
 		}
 	}
-	return false
+	return byteCounters{}, errors.New("tunnel counters not found")
 }

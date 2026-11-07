@@ -1,7 +1,9 @@
 package privileged
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,7 +13,7 @@ func TestVerboseOpenConnectArguments(t *testing.T) {
 	in := &ConnectRequest{Protocol: "anyconnect", Verbose: true, MACAddress: "02:00:00:00:00:01", Server: "https://vpn.example"}
 	hook := "/Applications/OpenConnect Desktop.app/Contents/Resources/bin/openconnect-script-hook"
 	args := (&Server{Hook: hook}).openConnectArgs(in)
-	want := []string{"--protocol", "anyconnect", "--passwd-on-stdin", "--script", "'/Applications/OpenConnect Desktop.app/Contents/Resources/bin/openconnect-script-hook'", "--useragent", "Open AnyConnect VPN Agent", "--compression", "none", "--reconnect-timeout", "3600", "--dump-http-traffic", "-vvv", "--mac-address", "02:00:00:00:00:01", "https://vpn.example"}
+	want := []string{"--protocol", "anyconnect", "--passwd-on-stdin", "--script", "'/Applications/OpenConnect Desktop.app/Contents/Resources/bin/openconnect-script-hook'", "--useragent", "Open AnyConnect VPN Agent", "--compression", "none", "--reconnect-timeout", "3600", "--send-device-id", "--dump-http-traffic", "-vvv", "--mac-address", "02:00:00:00:00:01", "https://vpn.example"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("arguments = %#v, want %#v", args, want)
 	}
@@ -91,5 +93,34 @@ func TestVersionReportsHelperConfiguration(t *testing.T) {
 	}
 	if response.ConfigID != "bundle-components" {
 		t.Fatalf("ConfigID = %q", response.ConfigID)
+	}
+}
+
+func TestRouteArgsSelectAddressFamily(t *testing.T) {
+	if got := strings.Join(routeArgs("delete", "2001:db8::/32", "-net", "2001:db8::/32"), " "); got != "-n delete -inet6 -net 2001:db8::/32" {
+		t.Fatal(got)
+	}
+	if got := strings.Join(routeArgs("add", "10.0.0.0/8", "-net", "10.0.0.0/8"), " "); got != "-n add -net 10.0.0.0/8" {
+		t.Fatal(got)
+	}
+}
+
+func TestValidTunnelDeviceRejectsScutilInjection(t *testing.T) {
+	if !ValidTunnelDevice("utun12") || ValidTunnelDevice("utun0\nset x") || ValidTunnelDevice("utun") {
+		t.Fatal("tunnel device validation is wrong")
+	}
+}
+
+func TestVerifyComponentsDetectsSwappedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hook")
+	_ = os.WriteFile(path, []byte("a"), 0700)
+	id, _ := ComponentID(path)
+	s := Server{Components: []string{path}, ConfigID: id}
+	if e := s.verifyComponents(); e != nil {
+		t.Fatal(e)
+	}
+	_ = os.WriteFile(path, []byte("b"), 0700)
+	if s.verifyComponents() == nil {
+		t.Fatal("swapped component accepted")
 	}
 }

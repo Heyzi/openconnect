@@ -12,7 +12,7 @@ CLANG_MODULE_CACHE_PATH=${CLANG_MODULE_CACHE_PATH:-/tmp/openconnect-desktop-clan
 export GOCACHE SWIFT_MODULECACHE_PATH CLANG_MODULE_CACHE_PATH
 
 cd "$SOURCE_ROOT"
-test -f Makefile || ./configure LDFLAGS="-framework CoreFoundation -framework SystemConfiguration -framework Security"
+test -f Makefile || ./configure LDFLAGS="-framework CoreFoundation -framework IOKit -framework SystemConfiguration -framework Security"
 make clean
 make
 cd "$ROOT"

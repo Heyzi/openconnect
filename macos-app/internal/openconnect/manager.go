@@ -1,8 +1,10 @@
 package openconnect
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -50,6 +52,12 @@ const wakeGracePeriod = 3 * time.Second
 // failed SSL negotiation plus its 10s backoff fits inside this window.
 var wakeSelfRecovery = 45 * time.Second
 
+var processPollInterval = time.Second
+
+// maxLogBytes bounds the runtime log; with --dump-http-traffic it otherwise
+// grows for the whole session.
+const maxLogBytes = 32 << 20
+
 func (m *Manager) NotifyWake() {
 	m.mu.Lock()
 	m.wokeAt = time.Now()
@@ -63,7 +71,9 @@ func resolveServerIP(server string) string {
 	if net.ParseIP(u.Hostname()) != nil {
 		return u.Hostname()
 	}
-	addrs, err := net.LookupHost(u.Hostname())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, u.Hostname())
 	if err != nil || len(addrs) == 0 {
 		return ""
 	}
@@ -125,8 +135,27 @@ func (m *Manager) Connect(p profiles.Profile, credentials Credentials) error {
 	return nil
 }
 
+// AdoptRunningSession picks up a tunnel the helper kept alive across an agent
+// restart. Without it the agent reports "disconnected" and every Disconnect
+// control is hidden while the VPN is still up.
+func (m *Manager) AdoptRunningSession() {
+	response, err := m.helper.Query(privileged.Request{Operation: "status"})
+	if err != nil || response.Running == nil || !*response.Running {
+		return
+	}
+	now := time.Now().UTC()
+	m.mu.Lock()
+	m.status = Status{State: "connected", StartedAt: &now}
+	m.mu.Unlock()
+	m.logs.Add("Warning", "OpenConnect", "adopted a VPN session left running by a previous agent")
+	go m.watchLog(now)
+	go m.watchProcess(now)
+	go m.watchTraffic(now)
+}
+
 func (m *Manager) watchTraffic(start time.Time) {
 	tracker := trafficTracker{}
+	device := ""
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -137,16 +166,21 @@ func (m *Manager) watchTraffic(start time.Time) {
 		if !active {
 			return
 		}
-		contents, err := os.ReadFile(m.statePath)
-		if err != nil {
-			continue
+		if device == "" {
+			contents, err := os.ReadFile(m.statePath)
+			if err != nil {
+				continue
+			}
+			var state scriptState
+			if json.Unmarshal(contents, &state) != nil || state.TunnelDevice == "" {
+				continue
+			}
+			device = state.TunnelDevice
 		}
-		var state scriptState
-		if json.Unmarshal(contents, &state) != nil || state.TunnelDevice == "" {
-			continue
-		}
-		counters, err := interfaceByteCounters(state.TunnelDevice)
+		counters, err := interfaceByteCounters(device)
 		if err != nil {
+			// A new device starts its counters over: rebaseline, keep the totals.
+			device, tracker.initialized = "", false
 			continue
 		}
 		stats := tracker.sample(counters, time.Now())
@@ -162,7 +196,7 @@ func (m *Manager) watchProcess(start time.Time) {
 	// The privileged helper owns the child process, so the unprivileged agent
 	// must explicitly observe it. In particular, OpenConnect can exit while the
 	// Mac is asleep after its CSTP reconnect attempts are exhausted.
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(processPollInterval)
 	defer ticker.Stop()
 	helperFailures := 0
 	for range ticker.C {
@@ -176,7 +210,7 @@ func (m *Manager) watchProcess(start time.Time) {
 		response, err := m.helper.Query(privileged.Request{Operation: "status"})
 		if err != nil || response.Running == nil {
 			helperFailures++
-			if helperFailures < 6 {
+			if helperFailures < 3 {
 				continue
 			}
 		} else {
@@ -202,28 +236,45 @@ func (m *Manager) watchProcess(start time.Time) {
 	}
 }
 func (m *Manager) watchLog(start time.Time) {
-	offset, remainder := 0, ""
+	offset, remainder := int64(0), ""
 	for {
 		m.mu.RLock()
 		active := m.status.StartedAt != nil && m.status.StartedAt.Equal(start) &&
 			(m.status.State == "connecting" || m.status.State == "connected" || m.status.State == "disconnecting")
+		finished := m.status.State == "disconnected"
 		m.mu.RUnlock()
 		offset, remainder = m.readLog(offset, remainder, !active)
 		if !active {
+			// The raw log holds unredacted auth traffic; don't leave it on disk.
+			if finished && m.logPath != "" {
+				_ = os.Truncate(m.logPath, 0)
+			}
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 }
 
-func (m *Manager) readLog(offset int, remainder string, flush bool) (int, string) {
-	data, err := os.ReadFile(m.logPath)
-	if err != nil || len(data) < offset {
+func (m *Manager) readLog(offset int64, remainder string, flush bool) (int64, string) {
+	file, err := os.Open(m.logPath)
+	if err != nil {
 		return offset, remainder
 	}
-	chunk := remainder + string(data[offset:])
-	offset = len(data)
-	lines := strings.Split(chunk, "\n")
+	defer file.Close()
+	if info, statErr := file.Stat(); statErr != nil {
+		return offset, remainder
+	} else if info.Size() < offset {
+		offset = 0
+	}
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		return offset, remainder
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return offset, remainder
+	}
+	offset += int64(len(data))
+	lines := strings.Split(remainder+string(data), "\n")
 	remainder = lines[len(lines)-1]
 	for _, line := range lines[:len(lines)-1] {
 		if strings.TrimSpace(line) != "" {
@@ -233,6 +284,10 @@ func (m *Manager) readLog(offset int, remainder string, flush bool) (int, string
 	if flush && strings.TrimSpace(remainder) != "" {
 		m.logs.Add("Info", "OpenConnect", remainder)
 		remainder = ""
+	}
+	// The helper opens the log O_APPEND, so writes continue from the new end.
+	if offset > maxLogBytes && os.Truncate(m.logPath, 0) == nil {
+		offset = 0
 	}
 	return offset, remainder
 }
@@ -386,7 +441,12 @@ func (m *Manager) applySavedRoutes(profile profiles.Profile) {
 		}
 	}
 	for _, cidr := range profile.RouteAdditions {
-		if _, found := m.routes.GetByCIDR(cidr); found {
+		if existing, found := m.routes.GetByCIDR(cidr); found {
+			// User routes outlive ClearServer across a reconnect, but teardown may
+			// have removed them from the system. Failure means it is still there.
+			if existing.Source == "user" {
+				_ = m.AddRoute(existing.CIDR)
+			}
 			continue
 		}
 		route, err := m.routes.Add(cidr)
@@ -456,6 +516,9 @@ func (m *Manager) finishDisconnect(startedAt *time.Time, finalError string, reco
 		return
 	}
 	if !stopped || !stateRemoved {
+		// "error" rather than "disconnecting": Connect refuses the latter, which
+		// would leave the user stuck until the app restarts.
+		m.status.State = "error"
 		m.status.LastError = "timed out waiting for OpenConnect and network cleanup to finish"
 		if finalError != "" {
 			m.status.LastError = finalError + "; " + m.status.LastError
@@ -504,6 +567,7 @@ func (m *Manager) failAndCleanup(start time.Time, reason string) {
 			m.status.LastError = reason + "; cleanup request failed: " + err.Error()
 		}
 		m.mu.Unlock()
+		go m.finishDisconnect(&start, reason, true, 30*time.Second)
 		return
 	}
 	m.mu.Lock()
